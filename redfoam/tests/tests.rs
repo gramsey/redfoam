@@ -5,4 +5,8 @@ mod tests {
     fn writesomething () {
         panic!("not written yet");
     }
+#[test]
+    fn readsomething () {
+        panic!("not written yet");
+    }
 }

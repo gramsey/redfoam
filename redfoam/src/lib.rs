@@ -4,7 +4,7 @@ mod producer {
     use std::io::{Error, ErrorKind};
 
     struct Topic {}
-
+/*
     impl Topic {
         fn Get (name : &String) -> Result<Topic, Error> {
             Err(Error::new(ErrorKind::Other, "function not written yet"))
@@ -14,5 +14,6 @@ mod producer {
             Err(Error::new(ErrorKind::Other, "function not written yet"))
         }
     }
+    */
 
 }
