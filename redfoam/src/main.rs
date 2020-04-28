@@ -24,7 +24,8 @@ fn main() {
     let (tx, rx) : (mpsc::Sender<TcpStream>, mpsc::Receiver<TcpStream>) = mpsc::channel();
 
     let thread1 = thread::spawn(move || {
-        producer::get_client(rx);
+        let producer_server = producer::ProducerServer::new(rx);
+        producer_server.get_client();
     });
 
 

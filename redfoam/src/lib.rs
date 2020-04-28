@@ -30,41 +30,52 @@ pub mod producer {
     use std::net::{TcpListener, TcpStream, Shutdown};
     use std::io::{Read, Write};
 
-    pub fn get_client (rx :  mpsc::Receiver<TcpStream> ) { 
-        let message = rx.recv();
-        match message {
-            Ok(instream) => {
-                handle_client(instream);
-            },
-
-            Err(e) => {
-                println!("  OOOPSS"); 
-            }
-        }
+    pub struct ProducerServer {
+        rx :  mpsc::Receiver<TcpStream>,
     }
 
+    impl ProducerServer {
 
+        pub fn new (rx :  mpsc::Receiver<TcpStream>) -> ProducerServer {
+            ProducerServer { rx }
+        }
 
-    fn handle_client(mut stream: TcpStream) {
-        let mut buf = [0; 1024];
-        let mut file = OpenOptions::new().append(true).open("/tmp/foo.txt").unwrap();
+        pub fn get_client (&self) { 
+            let message = self.rx.recv();
+            match message {
+                Ok(instream) => {
+                    ProducerServer::handle_client(instream);
+                },
 
-        while match stream.read(&mut buf) {
-            Ok(size) => {
-
-                stream.write(&buf[0..size]).unwrap();
-
-                file.write(&buf[0..size]).unwrap();
-
-                true
-            },
-
-            Err(_) => {
-                println!("Error with tcp stream to {}, (terminating connection)", stream.peer_addr().unwrap());
-                stream.shutdown(Shutdown::Both).unwrap();
-
-                false
+                Err(e) => {
+                    println!("  OOOPSS"); 
+                }
             }
-        } {}
+        }
+
+
+
+        fn handle_client(mut stream: TcpStream) {
+            let mut buf = [0; 1024];
+            let mut file = OpenOptions::new().append(true).open("/tmp/foo.txt").unwrap();
+
+            while match stream.read(&mut buf) {
+                Ok(size) => {
+
+                    stream.write(&buf[0..size]).unwrap();
+
+                    file.write(&buf[0..size]).unwrap();
+
+                    true
+                },
+
+                Err(_) => {
+                    println!("Error with tcp stream to {}, (terminating connection)", stream.peer_addr().unwrap());
+                    stream.shutdown(Shutdown::Both).unwrap();
+
+                    false
+                }
+            } {}
+        }
     }
 }
