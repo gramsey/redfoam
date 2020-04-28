@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use redfoam::Client::*;
+    use redfoam::client::*;
 #[test]
     fn writesomething () {
         let mut c = Client::new(String::from("mytopic"), String::from("127.0.0.1:9090")).unwrap();

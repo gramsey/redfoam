@@ -5,7 +5,6 @@
 // use tokio::net::TcpListener;
 // use tokio::fs::File;
 
-use std::fs::{File, OpenOptions};
 use std::net::{TcpListener, TcpStream, Shutdown};
 use std::io::{Read, Write};
 
@@ -15,51 +14,17 @@ use std::time::Duration;
 
 use std::env;
 use std::error::Error;
-
-
-fn handle_client(mut stream: TcpStream) {
-    let mut buf = [0; 1024];
-    let mut file = OpenOptions::new().append(true).open("/tmp/foo.txt").unwrap();
-
-    while match stream.read(&mut buf) {
-        Ok(size) => {
-
-            stream.write(&buf[0..size]).unwrap();
-
-            file.write(&buf[0..size]).unwrap();
-
-            true
-        },
-
-        Err(_) => {
-            println!("Error with tcp stream to {}, (terminating connection)", stream.peer_addr().unwrap());
-            stream.shutdown(Shutdown::Both).unwrap();
-
-            false
-        }
-    } {}
-}
-
+use redfoam::producer;
 
 fn main() {
     let addr = env::args()
             .nth(1)
             .unwrap_or_else(|| "127.0.0.1:9090".to_string());
 
-    let chan : (mpsc::Sender<TcpStream>, mpsc::Receiver<TcpStream>) = mpsc::channel();
-    let (tx, rx) = chan;
+    let (tx, rx) : (mpsc::Sender<TcpStream>, mpsc::Receiver<TcpStream>) = mpsc::channel();
 
     let thread1 = thread::spawn(move || {
-        let message = rx.recv();
-        match message {
-            Ok(instream) => {
-                handle_client(instream);
-            },
-
-            Err(e) => {
-                println!("  OOOPSS"); 
-            }
-        }
+        producer::get_client(rx);
     });
 
 
