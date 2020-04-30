@@ -55,7 +55,7 @@ impl ClientBuff {
 
     fn validate_token(&mut self) {
         let st = str::from_utf8(&self.buffer[0..self.rec_size as usize]).unwrap();
-        println!("header {}", st);
+        println!("header  {}, length {}, buff_pos {}", st, self.rec_size, self. buff_pos);
         self.state = BufferState::Active;
     }
 
