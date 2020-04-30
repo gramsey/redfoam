@@ -29,22 +29,83 @@ pub mod producer {
     use std::sync::mpsc;
     use std::net::{TcpListener, TcpStream, Shutdown};
     use std::io::{Read, Write};
+    use std::convert::TryInto;
+
+    const BUFF_SIZE : usize = 1024; //todo remove and make configureable
 
     pub struct ProducerServer {
         rx :  mpsc::Receiver<TcpStream>,
     }
 
-    impl ProducerServer {
 
-        pub fn new (rx :  mpsc::Receiver<TcpStream>) -> ProducerServer {
-            ProducerServer { rx }
+    struct ClientBuff {
+        auth_ok : bool,
+        topic : Option<String>,
+        buffer : [u8 ; BUFF_SIZE],
+        buff_pos : u32,
+        rec_size : u32,
+        rec_pos : u32,
+        rec_todo : u32,
+        tcp : TcpStream,
+        header : String,
+    }
+
+    impl ClientBuff {
+        fn new (stream : TcpStream) -> ClientBuff {
+            ClientBuff {
+                auth_ok : false, 
+                topic : None, 
+                buffer : [0; 1024],
+                buff_pos : 0,
+                rec_size : 0,
+                rec_pos : 0, 
+                rec_todo : 0, 
+                tcp : stream,
+                header : String::from(""),
+            }
+
         }
 
-        pub fn get_client (&self) { 
-            let message = self.rx.recv();
-            match message {
-                Ok(instream) => {
-                    ProducerServer::handle_client(instream);
+        fn process(&mut self) {
+            if self.auth_ok {
+                self.process_data();
+            } else {
+                self.process_auth();
+            }
+        }
+
+        fn process_data(&mut self) {
+
+        }
+
+        fn validate_token(&self) -> bool {
+            true
+        }
+
+        fn process_auth(&mut self) {
+
+            match self.tcp.read(&mut self.buffer) {
+                Ok(size) => {
+                    self.buff_pos += size as u32;
+
+                    if self.rec_size == 0 && self.buff_pos >= 4 {
+                        self.rec_size = u32::from_le_bytes(self.buffer[0..4].try_into().expect("slice with incorrect length"));
+                    }
+
+                    if self.rec_size <= self.buff_pos {
+                        self.auth_ok = self.validate_token();
+                        self.rec_pos = self.rec_size;
+
+                        if !self.auth_ok {
+                            self.tcp.write("BAD REQUEST".as_bytes()).unwrap();
+                            self.tcp.shutdown(Shutdown::Both).expect("shutdown call failed");
+                        } else {
+                            self.tcp.write("OK :)".as_bytes()).unwrap();
+                        }
+                    } else {
+                        println!("got {} bytes - need {}", self.buff_pos, self.rec_size);
+                    }
+                     
                 },
 
                 Err(e) => {
@@ -52,30 +113,34 @@ pub mod producer {
                 }
             }
         }
+    }
 
 
+    impl ProducerServer {
 
-        fn handle_client(mut stream: TcpStream) {
-            let mut buf = [0; 1024];
-            let mut file = OpenOptions::new().append(true).open("/tmp/foo.txt").unwrap();
+        pub fn new (rx :  mpsc::Receiver<TcpStream>) -> ProducerServer {
+            ProducerServer { rx }
+        }
 
-            while match stream.read(&mut buf) {
-                Ok(size) => {
+        pub fn run (&self) { 
+            loop {
+                let message = self.rx.recv();
 
-                    stream.write(&buf[0..size]).unwrap();
+                match message {
+                    Ok(instream) => {
+                        let mut c = ClientBuff::new(instream);
+                        c.process();
+                    },
 
-                    file.write(&buf[0..size]).unwrap();
-
-                    true
-                },
-
-                Err(_) => {
-                    println!("Error with tcp stream to {}, (terminating connection)", stream.peer_addr().unwrap());
-                    stream.shutdown(Shutdown::Both).unwrap();
-
-                    false
+                    Err(e) => {
+                        println!("  OOOPSS"); 
+                    }
                 }
-            } {}
+            }
         }
     }
+
+//            let mut file = OpenOptions::new().append(true).open("/tmp/foo.txt").unwrap();
+                    //file.write(&buf[0..size]).unwrap();
+
 }
