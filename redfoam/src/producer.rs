@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::convert::TryInto;
 use std::time::Duration;
 use std::thread;
+use std::str;
 
 const BUFF_SIZE : usize = 1024; //todo remove and make configureable
 
@@ -50,10 +51,11 @@ impl ClientBuff {
 
     fn process_data(&mut self) {
         println!("process data...");
-
     }
 
     fn validate_token(&mut self) {
+        let st = str::from_utf8(&self.buffer[0..self.rec_size as usize]).unwrap();
+        println!("header {}", st);
         self.state = BufferState::Active;
     }
 
