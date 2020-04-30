@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use std::env;
 use std::error::Error;
-use redfoam::producer;
+use redfoam::producer::{ProducerServer};
 
 fn main() {
     let addr = env::args()
@@ -24,7 +24,7 @@ fn main() {
     let (tx, rx) : (mpsc::Sender<TcpStream>, mpsc::Receiver<TcpStream>) = mpsc::channel();
 
     thread::spawn(move || {
-        producer::ProducerServer::new(rx).run();
+        ProducerServer::new(rx).run();
     });
 
 
