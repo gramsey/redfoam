@@ -5,15 +5,12 @@
 // use tokio::net::TcpListener;
 // use tokio::fs::File;
 
-use std::net::{TcpListener, TcpStream, Shutdown};
-use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
 use std::env;
-use std::error::Error;
 use redfoam::producer::{ProducerServer};
 
 fn main() {
@@ -38,7 +35,7 @@ fn main() {
                 tx.send(stream).unwrap();
             },
 
-            Err(e) => {
+            Err(_e) => {
                 panic!("connection failed");
             }
         }

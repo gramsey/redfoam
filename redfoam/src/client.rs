@@ -2,25 +2,29 @@ use std::io::{Result, Write};
 use std::net::TcpStream;
 
 pub struct Client {
-    topic_id : u32,
     io : TcpStream,
 }
-
 impl Client {
-    pub fn new (topic : String, url : String) -> Result<Client> {
+    pub fn new (topic : String, url : String, auth : String) -> Result<Client> {
 
-        let stream = TcpStream::connect("127.0.0.1:9090")?;
+        let mut stream = TcpStream::connect(url)?;
+        
+        let size : u32 = (4 + topic.len() + 1 + auth.len()) as u32;
 
-        Ok ( Client { topic_id : 1, io : stream, } )
+        stream.write(&size.to_le_bytes())?;
+        stream.write(topic.as_bytes())?;
+        stream.write(";".as_bytes())?;
+        stream.write(auth.as_bytes())?;
+
+        Ok (Client { io : stream })
     }
 
-    pub fn Send(&mut self, content : String) -> Result<()> {
+    pub fn send(&mut self, content : String) -> Result<()> {
+
+        let len : u32 = (4 + content.len()) as u32;
+        self.io.write(&len.to_le_bytes())?;
+
         self.io.write(content.as_bytes())?;
-        Ok(())
-    }
-
-    pub fn SendRaw(&mut self, content : &[u8]) -> Result<()> {
-        self.io.write(content)?;
         Ok(())
     }
 }
