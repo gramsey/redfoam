@@ -1,7 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::sync::mpsc;
 use std::net::{TcpStream, Shutdown};
-use std::io::{Read, Write};
+use std::io::{Read, Write, SeekFrom, Seek};
 use std::convert::TryInto;
 use std::time::Duration;
 use std::thread;
@@ -32,7 +32,7 @@ impl Topic {
         let f_index = OpenOptions::new().append(true).open(index_fname).expect("cant open topic index file");
 
         Topic {
-            index : 1, //todo: read from last written + 1
+            index : 0, //todo: read from last written + 1
             data_file : f_data,
             index_file : f_index,
             current_producer : None,
@@ -44,7 +44,11 @@ impl Topic {
         let end = client.buff_pos as usize;
         println!("writing {} to {}", start, end);
         println!("content :_{}_", str::from_utf8(&client.buffer[start..end]).expect("failed to format"));
-        self.data_file.write( &client.buffer[start..end]).unwrap()
+        let written = self.data_file.write( &client.buffer[start..end]).unwrap();
+        let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap().to_le_bytes();
+        self.index_file.write( &file_position).unwrap();
+        self.index += 1;
+        written
     }
 }
 
