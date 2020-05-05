@@ -40,13 +40,15 @@ impl Topic {
     }
 
     fn write (&mut self, client : &ClientBuff) -> usize {
-        let start = client.write_start();
+        let start = client.rec_pos as usize;
         let end = client.buff_pos as usize;
         println!("writing {} to {}", start, end);
         println!("content :_{}_", str::from_utf8(&client.buffer[start..end]).expect("failed to format"));
         let written = self.data_file.write( &client.buffer[start..end]).unwrap();
-        let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap().to_le_bytes();
-        self.index_file.write( &file_position).unwrap();
+        let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap();
+        println!("file end position {}, rec size {}", file_position, client.rec_size);
+        let file_position_bytes = (file_position - client.rec_size as u64).to_le_bytes(); // get start instead of end position
+        self.index_file.write( &file_position_bytes).unwrap();
         self.index += 1;
         written
     }
@@ -60,6 +62,7 @@ struct ClientBuff {
     buff_pos : u32,
     rec_size : u32,
     rec_pos : u32,
+    rec_upto : u32,
     tcp : TcpStream,
 }
 impl ClientBuff {
@@ -68,42 +71,77 @@ impl ClientBuff {
             producer_id : producer_id,
             state : BufferState::Pending, 
             topic : None, 
-            buffer : [0; 1024],
-            buff_pos : 0,
-            rec_size : 0,
-            rec_pos : 0, 
+            buffer : [0; BUFF_SIZE],
+            buff_pos : 0, // position of end of buffer (read from tcp) 
+            rec_size : 0, // size of record excluding 4 byte size
+            rec_pos : 0,  // position of last byte processed in buffer
+            rec_upto : 0, // no of bytes processed so far in record
             tcp : stream,
         }
 
     }
 
-    fn write_start(&self) -> usize {
-        self.rec_pos as usize % BUFF_SIZE 
+    fn set_rec_size(&mut self) {
+        if self.rec_size == 0 && self.buff_pos >= self.rec_pos + 4 {
+            let start = self.rec_pos as usize;
+            let end = self.rec_pos as usize + 4 ;
+            self.rec_size = u32::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
+            self.rec_pos += 4;
+        }
+    }
+
+    fn read(&mut self) {
+        match self.tcp.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
+            Ok(size) => {
+                self.buff_pos += size as u32;
+            },
+
+            Err(_e) => {
+                println!("  OOOPSS"); 
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        // if all buffer is read reset 
+        if self.buff_pos == self.rec_pos {
+            self.buff_pos = 0;
+            self.rec_pos = 0;
+        } else if self.buff_pos < self.rec_pos {
+            panic!("record beyond end of buffer");
+        }
+
+        // if record is completely written reset
+        if self.rec_upto == self.rec_size {
+            self.rec_upto = 0;
+            self.rec_size = 0;
+        } else if self.rec_upto > self.rec_size {
+            panic!("read past end of record? shouldn't happen...");
+        }
     }
 
     fn process_data(&mut self, topic_list : &mut HashMap<String,Topic>) {
         println!("process data...");
+        self.set_rec_size();
 
-        if self.buff_pos as usize >= self.write_start() {  
+        println!("rec size set - buff_pos {}, rec_pos {}, rec_size {}, rec_upto {}", self.buff_pos, self.rec_pos, self.rec_size, self.rec_upto);
+
+        if self.buff_pos >= self.rec_pos && self.rec_size > 0 {  // has unread data and size has been set ok
             match &self.topic {
                 Some(topic_name) => match topic_list.get_mut(topic_name) {
                     Some(topic) => {
-                        let n = topic.write(&self);
-                        self.rec_pos += n as u32;
+                        let written = topic.write(&self);
+                        self.rec_pos += written as u32;
+                        self.rec_upto += written as u32;
                         
-                        // if record is completely written reset
-                        if self.rec_pos == self.rec_size {
-                            self.rec_pos = 0;
-                            self.rec_size = 0;
+                        self.reset();
+
+                        if self.rec_size == 0 {
                             topic.current_producer = None;
                             topic.index += 1;
-                        } else if self.rec_pos < self.rec_size {
-                            topic.current_producer = Some(self.producer_id); // record only half written need to block topic
-                        } else {
-                            panic!("read past end of record? shouldn't happen...");
                         }
 
-                        println!("adding {} to rec_pos to get {} ", n, self.rec_pos);
+                        println!("adding {} to rec_pos to get {} ", written, self.rec_pos);
                     },
 
                     None => {
@@ -114,34 +152,22 @@ impl ClientBuff {
                 None => {
                     panic!("topic not set for authorized client");
                 }
-
             }
         }
 
-
-        match self.tcp.read(&mut self.buffer[self.buff_pos as usize..1024]) {
-            Ok(size) => {
-                self.buff_pos += size as u32;
-
-                if self.rec_size == self.rec_pos && self.buff_pos >= 4 {
-                    self.rec_size = u32::from_le_bytes(self.buffer[0..4].try_into().expect("slice with incorrect length"));
-                }
-            },
-
-            Err(_e) => {
-                println!("  OOOPSS"); 
-            }
-        }
+        self.read();
     }
 
     fn validate_token(&mut self) {
         println!("validating token");
 
+        let start = self.rec_pos as usize;
+        let end = (self.rec_pos + self.rec_size) as usize;
       
-        let st = str::from_utf8(&self.buffer[4..self.rec_size as usize]).unwrap();
+        let st = str::from_utf8(&self.buffer[start..end]).unwrap();
 
         for x in st.chars() {
-            println!("{}",x);
+            println!("{}", x);
         }
         println!("done split");
         println!("splitting :  {}", st);
@@ -170,28 +196,20 @@ impl ClientBuff {
 
     fn process_auth(&mut self) {
 
-        println!("process auth...");
-        match self.tcp.read(&mut self.buffer) {
-            Ok(size) => {
-                self.buff_pos += size as u32;
+        self.read();
+        self.set_rec_size();
 
-                if self.rec_size == 0 && self.buff_pos >= 4 {
-                    self.rec_size = u32::from_le_bytes(self.buffer[0..4].try_into().expect("slice with incorrect length"));
-                }
+        println!("rec_size :{}",self.rec_size);
+        println!("buff_pos :{}",self.buff_pos);
+        println!("rec_pos :{}",self.rec_pos);
 
-                if self.rec_size <= self.buff_pos {
-                    self.validate_token();
-                    self.rec_pos = self.rec_size;
-                } else {
-                    println!("got {} bytes - need {}", self.buff_pos, self.rec_size);
-                }
-                 
-            },
-
-            Err(_e) => {
-                println!("  OOOPSS"); 
-            }
+        if self.rec_size > 0 && self.buff_pos >= self.rec_size + self.rec_pos {
+            self.validate_token();
+            self.rec_pos += self.rec_size;
+            self.rec_upto += self.rec_size;
+            self.reset();
         }
+        
     }
 }
 
