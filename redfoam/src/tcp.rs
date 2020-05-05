@@ -21,6 +21,7 @@ pub fn run_server(addr : String) {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                stream.set_nonblocking(true).expect("set_nonblocking call failed");
                 tx.send(stream).unwrap();
             },
 

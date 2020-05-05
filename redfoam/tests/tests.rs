@@ -19,6 +19,7 @@ mod tests {
 
         let mut c = Client::new(String::from("test"), String::from("127.0.0.1:9090"), String::from("ANON")).unwrap();
         c.send(String::from("hello world!")).expect("sending hello world failed");
+        c.send(String::from("another message")).expect("sending another message failed");
         thread::sleep(Duration::new(1,0));
     }
 

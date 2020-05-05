@@ -1,7 +1,7 @@
 use std::fs::{File, OpenOptions};
 use std::sync::mpsc;
 use std::net::{TcpStream, Shutdown};
-use std::io::{Read, Write, SeekFrom, Seek};
+use std::io::{Read, Write, SeekFrom, Seek, ErrorKind};
 use std::convert::TryInto;
 use std::time::Duration;
 use std::thread;
@@ -39,15 +39,11 @@ impl Topic {
         }
     }
 
-    fn write (&mut self, client : &ClientBuff) -> usize {
-        let start = client.rec_pos as usize;
-        let end = client.buff_pos as usize;
-        println!("writing {} to {}", start, end);
-        println!("content :_{}_", str::from_utf8(&client.buffer[start..end]).expect("failed to format"));
-        let written = self.data_file.write( &client.buffer[start..end]).unwrap();
+    fn write(&mut self, slice : &[u8]) -> usize {
+        println!("content :_{}_", str::from_utf8(slice).expect("failed to format"));
+        let written = self.data_file.write(slice).unwrap();
         let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap();
-        println!("file end position {}, rec size {}", file_position, client.rec_size);
-        let file_position_bytes = (file_position - client.rec_size as u64).to_le_bytes(); // get start instead of end position
+        let file_position_bytes = (file_position as u64).to_le_bytes(); // get start instead of end position
         self.index_file.write( &file_position_bytes).unwrap();
         self.index += 1;
         written
@@ -81,6 +77,19 @@ impl ClientBuff {
 
     }
 
+    fn read_rec_to(&self) -> usize {
+        let buff_toread = self.buff_pos - self.rec_pos;
+        let rec_toread = self.rec_size - self.rec_upto;
+
+        if buff_toread <=  rec_toread {
+            //read to end of buffered
+            self.buff_pos as usize
+        } else {
+            //read just up to end of record
+            (self.rec_pos + self.rec_size) as usize
+        }
+    }
+
     fn set_rec_size(&mut self) {
         if self.rec_size == 0 && self.buff_pos >= self.rec_pos + 4 {
             let start = self.rec_pos as usize;
@@ -95,10 +104,11 @@ impl ClientBuff {
             Ok(size) => {
                 self.buff_pos += size as u32;
             },
-
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+            },
             Err(_e) => {
-                println!("  OOOPSS"); 
-            }
+                panic!("Error trying to read into clientbuff"); 
+            },
         }
     }
 
@@ -130,7 +140,10 @@ impl ClientBuff {
             match &self.topic {
                 Some(topic_name) => match topic_list.get_mut(topic_name) {
                     Some(topic) => {
-                        let written = topic.write(&self);
+                        //let written = topic.write(&self);
+                        let slice = &self.buffer[self.rec_pos as usize .. self.read_rec_to()];
+                        let written = topic.write(slice);
+
                         self.rec_pos += written as u32;
                         self.rec_upto += written as u32;
                         

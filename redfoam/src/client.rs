@@ -24,6 +24,7 @@ impl Client {
         self.io.write(&len.to_le_bytes())?;
 
         self.io.write(content.as_bytes())?;
+        println!("sent {}", content);
         Ok(())
     }
 }
