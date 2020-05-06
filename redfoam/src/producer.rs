@@ -1,12 +1,12 @@
-use std::fs::{File, OpenOptions};
 use std::sync::mpsc;
 use std::net::{TcpStream, Shutdown};
-use std::io::{Read, Write, SeekFrom, Seek, ErrorKind};
+use std::io::{Read, Write, ErrorKind};
 use std::convert::TryInto;
 use std::time::Duration;
 use std::thread;
 use std::str;
 use std::collections::HashMap;
+use super::topic::{Topic};
 
 const BUFF_SIZE : usize = 1024; //todo remove and make configureable
 
@@ -16,42 +16,30 @@ enum BufferState {
     Closed,
 }
 
-struct Topic {
-    index : u32,
-    data_file : File,
-    index_file : File,
-    current_producer : Option<u32>,
+struct Buff {
+    buffer : [u8 ; BUFF_SIZE],
+    buff_pos : u32,
+    rec_size : u32,
+    rec_pos : u32,
+    rec_upto : u32,
 }
-impl Topic {
-    // new handle, topic must already exist as a sym link
-    fn new (name : String) -> Topic  {
-        let data_fname = format!("/tmp/{}/data", name);
-        let index_fname = format!("/tmp/{}/index", name);
 
-        let f_data = OpenOptions::new().append(true).open(data_fname).expect("cant open topic data file");
-        let f_index = OpenOptions::new().append(true).open(index_fname).expect("cant open topic index file");
-
-        Topic {
-            index : 0, //todo: read from last written + 1
-            data_file : f_data,
-            index_file : f_index,
-            current_producer : None,
-        }
-    }
-
-    fn write(&mut self, slice : &[u8]) -> usize {
-        println!("content :_{}_", str::from_utf8(slice).expect("failed to format"));
-        let written = self.data_file.write(slice).unwrap();
-        let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap();
-        let file_position_bytes = (file_position as u64).to_le_bytes(); // get start instead of end position
-        self.index_file.write( &file_position_bytes).unwrap();
-        self.index += 1;
-        written
-    }
-}
+// impl Buff {
+//     fn read(&mut self, impl Read) {
+//         match self.tcp.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
+//             Ok(size) => {
+//                 self.buff_pos += size as u32;
+//             },
+//             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+//             },
+//             Err(_e) => {
+//                 panic!("Error trying to read into clientbuff"); 
+//             },
+//         }
+//     }
+// }
 
 struct ClientBuff {
-    producer_id : u32,
     state : BufferState,
     topic : Option<String>,
     buffer : [u8 ; BUFF_SIZE],
@@ -61,10 +49,11 @@ struct ClientBuff {
     rec_upto : u32,
     tcp : TcpStream,
 }
+
+
 impl ClientBuff {
-    fn new (stream : TcpStream, producer_id : u32) -> ClientBuff {
+    fn new (stream : TcpStream) -> ClientBuff {
         ClientBuff {
-            producer_id : producer_id,
             state : BufferState::Pending, 
             topic : None, 
             buffer : [0; BUFF_SIZE],
@@ -100,6 +89,7 @@ impl ClientBuff {
     }
 
     fn read(&mut self) {
+        // read data into buffer
         match self.tcp.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
             Ok(size) => {
                 self.buff_pos += size as u32;
@@ -110,6 +100,11 @@ impl ClientBuff {
                 panic!("Error trying to read into clientbuff"); 
             },
         }
+
+    }
+
+    fn get_slice(&mut self) -> &[u8] {
+            &self.buffer[self.rec_pos as usize .. self.read_rec_to()]
     }
 
     fn reset(&mut self) {
@@ -130,31 +125,101 @@ impl ClientBuff {
         }
     }
 
+    fn read_data(&mut self) -> (usize, usize, bool) {
+        match self.tcp.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
+            Ok(size) => {
+                self.buff_pos += size as u32;
+            },
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+            },
+            Err(_e) => {
+                panic!("Error trying to read into clientbuff"); 
+            },
+        }
+
+        // set record size 
+        if self.rec_size == 0 && self.buff_pos >= self.rec_pos + 4 {
+            let start = self.rec_pos as usize;
+            let end = self.rec_pos as usize + 4 ;
+            self.rec_size = u32::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
+            self.rec_pos += 4;
+        }
+
+        if self.rec_size > 0 {
+        // get data slice
+            let buff_toread = self.buff_pos - self.rec_pos;
+            let rec_toread = self.rec_size - self.rec_upto;
+            let rec_end : usize;
+
+            if buff_toread <=  rec_toread {
+                rec_end = self.buff_pos as usize
+            } else {
+                //read just up to end of record
+                rec_end = (self.rec_pos + self.rec_size) as usize
+            }
+
+            let rec_start = self.rec_pos as usize;
+
+            // update for next read
+            self.rec_pos += (rec_end - rec_start) as u32;
+            self.rec_upto += (rec_end - rec_start) as u32;
+
+            // if all buffer is read reset 
+            if self.buff_pos == self.rec_pos {
+                self.buff_pos = 0;
+                self.rec_pos = 0;
+            } else if self.buff_pos < self.rec_pos {
+                panic!("record beyond end of buffer");
+            }
+
+            let mut is_end_of_record = false;
+            // if record is completely written reset
+            if self.rec_upto == self.rec_size {
+                self.rec_upto = 0;
+                self.rec_size = 0;
+                is_end_of_record = true;
+            } else if self.rec_upto > self.rec_size {
+                panic!("read past end of record? shouldn't happen...");
+            }
+            (rec_start, rec_end, is_end_of_record)
+        } else {
+            (0, 0, false)
+        }
+
+        
+    }
+
     fn process_data(&mut self, topic_list : &mut HashMap<String,Topic>) {
         println!("process data...");
-        self.set_rec_size();
+        //self.read();
+        //self.set_rec_size();
+        let (start, end, is_end_of_record) = self.read_data();
+        println!("start : {}, end {}, is_eor : {}", start, end, is_end_of_record);
+        let slice = &self.buffer[start .. end];
 
-        println!("rec size set - buff_pos {}, rec_pos {}, rec_size {}, rec_upto {}", self.buff_pos, self.rec_pos, self.rec_size, self.rec_upto);
+        println!("content :_{}_", str::from_utf8(slice).expect("failed to format"));
+        println!("slicen len : {}", slice.len());
 
-        if self.buff_pos >= self.rec_pos && self.rec_size > 0 {  // has unread data and size has been set ok
+        if slice.len() > 0 {  // has unread data and size has been set ok
+            println!("... 1");
             match &self.topic {
                 Some(topic_name) => match topic_list.get_mut(topic_name) {
                     Some(topic) => {
+                        println!("... 2");
                         //let written = topic.write(&self);
-                        let slice = &self.buffer[self.rec_pos as usize .. self.read_rec_to()];
+                        //let slice = &self.buffer[self.rec_pos as usize .. self.read_rec_to()];
+                        //let slice = self.get_slice();
                         let written = topic.write(slice);
+                        println!(" wrote {}", written);
 
-                        self.rec_pos += written as u32;
-                        self.rec_upto += written as u32;
+                        //self.rec_pos += written as u32;
+                        //self.rec_upto += written as u32;
                         
-                        self.reset();
+                        //self.reset();
 
-                        if self.rec_size == 0 {
-                            topic.current_producer = None;
-                            topic.index += 1;
+                        if is_end_of_record {
+                            topic.end_rec();
                         }
-
-                        println!("adding {} to rec_pos to get {} ", written, self.rec_pos);
                     },
 
                     None => {
@@ -168,7 +233,6 @@ impl ClientBuff {
             }
         }
 
-        self.read();
     }
 
     fn validate_token(&mut self) {
@@ -238,13 +302,10 @@ impl ProducerServer {
         let mut client_list : Vec<ClientBuff> = Vec::new();
         let mut topic_list : HashMap<String, Topic> = HashMap::new();
         topic_list.insert(String::from("test"), Topic::new(String::from("test")));
-        let mut next_producerid : u32 = 0;
 
         loop {
             // add new client if sent
             let message = self.rx.try_recv();
-
-            next_producerid += 1;
 
             match message {
                 Err(mpsc::TryRecvError::Empty) => {
@@ -253,7 +314,7 @@ impl ProducerServer {
 
                 Ok(instream) => {
                     println!("creating new client");
-                    let c = ClientBuff::new(instream, next_producerid);
+                    let c = ClientBuff::new(instream);
                     client_list.push(c);
                 },
                 
