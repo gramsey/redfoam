@@ -2,7 +2,6 @@
 mod tests {
     use redfoam::client::Client;
     use redfoam::tcp;
-    use std::process::Command;
     use std::time::Duration;
     use std::thread;
 

@@ -14,17 +14,17 @@ enum BufferState {
     Closed,
 }
 
-struct ClientBuff {
+struct ProducerClient {
     state : BufferState,
     topic : Option<String>,
     buff : Buff,
     tcp : TcpStream,
 }
-impl ClientBuff {
-    fn new (stream : TcpStream) -> ClientBuff {
+impl ProducerClient {
+    fn new (stream : TcpStream) -> ProducerClient {
         let buff = Buff::new();
 
-        ClientBuff {
+        ProducerClient {
             state : BufferState::Pending, 
             buff : buff,
             topic : None, 
@@ -102,7 +102,7 @@ impl ProducerServer {
     }
 
     pub fn run (&self) { 
-        let mut client_list : Vec<ClientBuff> = Vec::new();
+        let mut client_list : Vec<ProducerClient> = Vec::new();
         let mut topic_list : HashMap<String, Topic> = HashMap::new();
         topic_list.insert(String::from("test"), Topic::new(String::from("test")));
 
@@ -117,7 +117,7 @@ impl ProducerServer {
 
                 Ok(instream) => {
                     println!("creating new client");
-                    let c = ClientBuff::new(instream);
+                    let c = ProducerClient::new(instream);
                     client_list.push(c);
                 },
                 
