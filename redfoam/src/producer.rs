@@ -2,12 +2,11 @@ use std::sync::mpsc;
 use std::net::{TcpStream, Shutdown};
 use std::time::Duration;
 use std::thread;
-use std::str;
 use std::io::Write;
+use std::str;
 use std::collections::HashMap;
 use super::topic::{Topic};
 use super::buff::{Buff};
-
 
 enum BufferState {
     Pending,
@@ -21,8 +20,6 @@ struct ClientBuff {
     buff : Buff,
     tcp : TcpStream,
 }
-
-
 impl ClientBuff {
     fn new (stream : TcpStream) -> ClientBuff {
         let buff = Buff::new();
@@ -37,24 +34,17 @@ impl ClientBuff {
 
     fn process_data(&mut self, topic_list : &mut HashMap<String,Topic>) {
         println!("process data...");
-        let (start, end, is_end_of_record) = self.buff.read_data(&mut self.tcp);
-        println!("start : {}, end {}, is_eor : {}", start, end, is_end_of_record);
-        let slice = &self.buff.buffer[start .. end];
-
-        println!("content :_{}_", str::from_utf8(slice).expect("failed to format"));
-        println!("slicen len : {}", slice.len());
-
-        if slice.len() > 0 {  // has unread data and size has been set ok
-            println!("... 1");
+        self.buff.read_data(&mut self.tcp);
+        if self.buff.has_data() {
             match &self.topic {
                 Some(topic_name) => match topic_list.get_mut(topic_name) {
                     Some(topic) => {
-                        let written = topic.write(slice);
-                        println!(" wrote {}", written);
-
-                        if is_end_of_record {
+                        let written = topic.write(self.buff.data());
+                        if self.buff.is_end_of_record() {
                             topic.end_rec();
                         }
+                        self.buff.reset();
+                        println!(" wrote {}", written);
                     },
 
                     None => {
@@ -67,37 +57,39 @@ impl ClientBuff {
                 }
             }
         }
-
     }
 
     fn process_auth(&mut self) {
 
-        let (_, end, is_end_of_record) = self.buff.read_data(&mut self.tcp);
+        self.buff.read_data(&mut self.tcp);
 
-        if is_end_of_record {
+        if self.buff.is_end_of_record() {
+            let content = str::from_utf8(self.buff.data()).unwrap();
+            println!("content : {} ", content);
 
-            let st = str::from_utf8(&self.buff.buffer[4..end]).unwrap();
+            let mut authpart = content.split(";");
 
-            println!("splitting :  {}", st);
-            let mut split = st.split(";");
-
-            let topic_name = String::from(split.next().unwrap());
+            let topic_name = String::from(authpart.next().unwrap());
             println!("topic : {}", &topic_name);
             self.topic = Some(topic_name);
 
-            let auth_token = split.next().unwrap();
+            let auth_token = authpart.next().unwrap();
             println!("auth_token : {}", auth_token);
-        
 
             if auth_token == "ANON" {
                 self.state = BufferState::Active;
+                self.buff.reset();
             } else {
-                println!("AUTH failed expected ANON got {}", st);
+                println!("AUTH failed expected ANON got {}", auth_token);
                 self.tcp.write("BAD REQUEST".as_bytes()).unwrap();
                 self.state = BufferState::Closed;
                 self.tcp.shutdown(Shutdown::Both).expect("shutdown call failed");
             }
         }
+    }
+
+    fn state(&self) -> &BufferState {
+        &self.state
     }
 }
 
@@ -138,7 +130,7 @@ impl ProducerServer {
             for i in (0..client_list.len()).rev() {
                 let c = &mut client_list[i];
 
-                match c.state {
+                match c.state() {
                     BufferState::Pending => {
                         c.process_auth();
                     },

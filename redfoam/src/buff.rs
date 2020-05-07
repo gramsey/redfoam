@@ -21,7 +21,7 @@ impl Buff {
         }
     }
 
-    pub fn read_data(&mut self, stream : &mut impl Read) -> (usize, usize, bool) {
+    pub fn read_data(&mut self, stream : &mut impl Read) -> () {
         match stream.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
             Ok(size) => {
                 self.buff_pos += size as u32;
@@ -40,46 +40,54 @@ impl Buff {
             self.rec_size = u32::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
             self.rec_pos += 4;
         }
+    }
 
-        if self.rec_size > 0 {
-        // get data slice
-            let buff_toread = self.buff_pos - self.rec_pos;
-            let rec_toread = self.rec_size - self.rec_upto;
-            let rec_end : usize;
+    pub fn has_data(&self) -> bool {
+        self.read_to() as u32 - self.rec_pos > 0
+    }
 
-            if buff_toread <=  rec_toread {
-                rec_end = self.buff_pos as usize
-            } else {
-                //read just up to end of record
-                rec_end = (self.rec_pos + self.rec_size) as usize
-            }
+    pub fn is_end_of_record(&self) -> bool {
+        let size = self.read_to() as u32 - self.rec_pos;
+        self.rec_upto + size == self.rec_size 
+    }
+    
 
-            let rec_start = self.rec_pos as usize;
+    pub fn data(&self) -> &[u8] {
+        &self.buffer[self.rec_pos as usize .. self.read_to()]
+    }
 
-            // update for next read
-            self.rec_pos += (rec_end - rec_start) as u32;
-            self.rec_upto += (rec_end - rec_start) as u32;
+    fn read_to(&self) -> usize {
+        let buff_toread = self.buff_pos - self.rec_pos;
+        let rec_toread = self.rec_size - self.rec_upto;
 
-            // if all buffer is read reset 
-            if self.buff_pos == self.rec_pos {
-                self.buff_pos = 0;
-                self.rec_pos = 0;
-            } else if self.buff_pos < self.rec_pos {
-                panic!("record beyond end of buffer");
-            }
-
-            let mut is_end_of_record = false;
-            // if record is completely written reset
-            if self.rec_upto == self.rec_size {
-                self.rec_upto = 0;
-                self.rec_size = 0;
-                is_end_of_record = true;
-            } else if self.rec_upto > self.rec_size {
-                panic!("read past end of record? shouldn't happen...");
-            }
-            (rec_start, rec_end, is_end_of_record)
+        if buff_toread <=  rec_toread {
+            self.buff_pos as usize
         } else {
-            (0, 0, false)
+            //read just up to end of record
+            (self.rec_pos + rec_toread) as usize
+        }
+    }
+
+    pub fn reset(&mut self) {
+        // update for next read
+        let size = self.read_to() as u32 - self.rec_pos;
+        self.rec_pos += size;
+        self.rec_upto += size;
+
+        // if all buffer is read reset 
+        if self.buff_pos == self.rec_pos {
+            self.buff_pos = 0;
+            self.rec_pos = 0;
+        } else if self.buff_pos < self.rec_pos {
+            panic!("record beyond end of buffer");
+        }
+
+        // if record is completely written reset
+        if self.is_end_of_record() {
+            self.rec_upto = 0;
+            self.rec_size = 0;
+        } else if self.rec_upto > self.rec_size {
+            panic!("read past end of record? shouldn't happen...");
         }
     }
 }
