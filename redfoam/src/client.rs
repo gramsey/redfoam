@@ -13,13 +13,11 @@ impl Client {
         
         let size = message.len() as u32;
         let mess_type : u8 = 1; // 1 = auth
-        let topic_id : u16 = 0; // 1 = auth
         let seq : u8 = 1;
 
         stream.write(&size.to_le_bytes())?;
         stream.write(&[seq])?;
         stream.write(&[mess_type])?;
-        stream.write(&topic_id.to_le_bytes())?;
         stream.write(message.as_bytes())?;
 
         Ok (Client { io : stream, seq : seq + 1 })

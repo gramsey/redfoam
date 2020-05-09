@@ -17,6 +17,9 @@ struct ProducerClient {
     state : BufferState,
     buff : Buff,
     tcp : TcpStream,
+    seq : u8,
+    rec_type : u8,
+    topic_id : u16,
 }
 impl ProducerClient {
     fn new (stream : TcpStream) -> ProducerClient {
@@ -26,6 +29,9 @@ impl ProducerClient {
             state : BufferState::Pending, 
             buff : buff,
             tcp : stream,
+            seq : 0,
+            rec_type : 0, 
+            topic_id : 0,
         }
     }
 
@@ -46,16 +52,34 @@ impl ProducerClient {
         }
     }
 
+    fn read_header(&mut self) {
+        if self.buff.rec_size == 0 && self.buff.has_bytes_to_read(8) {
+            println!("reading header");
+
+            self.buff.rec_size = self.buff.read_u32();
+
+            let expected_seq = self.seq % 255 + 1;
+            self.seq = self.buff.read_u8();
+            if expected_seq != self.seq { panic!("message has invalid sequence") }
+
+            self.rec_type = self.buff.read_u8();
+            self.topic_id = self.buff.read_u16();
+
+            println!("size {} , seq {} , rec_type {} , topic_id {}", self.buff.rec_size, self.seq, self.rec_type, self.topic_id);
+        }
+    }
+
     fn process_data(&mut self, topic_list : &mut TopicList) {
         println!("process data...");
         self.buff.read_data(&mut self.tcp);
+        self.read_header();
 
         if self.buff.has_data() {
-            topic_list.write(self.buff.topic_id(), self.buff.data());
+            topic_list.write(self.topic_id, self.buff.data());
 
             if self.buff.is_end_of_record() {
-                let idx = topic_list.end_record(self.buff.topic_id());
-                self.tcp.write(&[self.buff.seq()]).unwrap();
+                let idx = topic_list.end_record(self.topic_id);
+                self.tcp.write(&[self.seq]).unwrap();
                 self.tcp.write(&idx.to_le_bytes()).unwrap();
             }
             self.buff.reset();
@@ -65,8 +89,17 @@ impl ProducerClient {
     fn process_auth(&mut self) {
 
         self.buff.read_data(&mut self.tcp);
+        println!("process_auth, rec_size {}, 6 bytes to read {} ", self.buff.rec_size, self.buff.has_bytes_to_read(6));
+        
+        if self.buff.rec_size == 0 && self.buff.has_bytes_to_read(6) {
+            println!("reading header");
+            self.buff.rec_size = self.buff.read_u32();
+            self.rec_type = self.buff.read_u8();
+            self.seq = self.buff.read_u8();
+        }
 
         if self.buff.is_end_of_record() {
+
             let content = str::from_utf8(self.buff.data()).unwrap();
             println!("content : {} ", content);
 
