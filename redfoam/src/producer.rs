@@ -4,8 +4,7 @@ use std::time::Duration;
 use std::thread;
 use std::io::Write;
 use std::str;
-use std::collections::HashMap;
-use super::topic::{Topic};
+use super::topic::{TopicList};
 use super::buff::{Buff};
 
 enum BufferState {
@@ -16,7 +15,6 @@ enum BufferState {
 
 struct ProducerClient {
     state : BufferState,
-    topic : Option<String>,
     buff : Buff,
     tcp : TcpStream,
 }
@@ -27,35 +25,40 @@ impl ProducerClient {
         ProducerClient {
             state : BufferState::Pending, 
             buff : buff,
-            topic : None, 
             tcp : stream,
         }
     }
 
-    fn process_data(&mut self, topic_list : &mut HashMap<String,Topic>) {
+    fn process(&mut self, topic_list : &mut TopicList) {
+        match self.state() {
+            BufferState::Pending => {
+                self.process_auth();
+            },
+
+            BufferState::Active => {
+                self.process_data(topic_list);
+            },
+
+            BufferState::Closed => {
+                panic!("trying to process closed connection");
+            },
+
+        }
+    }
+
+    fn process_data(&mut self, topic_list : &mut TopicList) {
         println!("process data...");
         self.buff.read_data(&mut self.tcp);
+
         if self.buff.has_data() {
-            match &self.topic {
-                Some(topic_name) => match topic_list.get_mut(topic_name) {
-                    Some(topic) => {
-                        let written = topic.write(self.buff.data());
-                        if self.buff.is_end_of_record() {
-                            topic.end_rec();
-                        }
-                        self.buff.reset();
-                        println!(" wrote {}", written);
-                    },
+            topic_list.write(self.buff.topic_id(), self.buff.data());
 
-                    None => {
-                        panic!("invalid topic");
-                    },
-                },
-
-                None => {
-                    panic!("topic not set for authorized client");
-                }
+            if self.buff.is_end_of_record() {
+                let idx = topic_list.end_record(self.buff.topic_id());
+                self.tcp.write(&[self.buff.seq()]).unwrap();
+                self.tcp.write(&idx.to_le_bytes()).unwrap();
             }
+            self.buff.reset();
         }
     }
 
@@ -70,8 +73,8 @@ impl ProducerClient {
             let mut authpart = content.split(";");
 
             let topic_name = String::from(authpart.next().unwrap());
-            println!("topic : {}", &topic_name);
-            self.topic = Some(topic_name);
+            println!("topic_name : {}", topic_name);
+
 
             let auth_token = authpart.next().unwrap();
             println!("auth_token : {}", auth_token);
@@ -103,12 +106,14 @@ impl ProducerServer {
 
     pub fn run (&self) { 
         let mut client_list : Vec<ProducerClient> = Vec::new();
-        let mut topic_list : HashMap<String, Topic> = HashMap::new();
-        topic_list.insert(String::from("test"), Topic::new(String::from("test")));
+        let mut topic_list = TopicList::new();
 
         loop {
             // add new client if sent
+            //
+            println!("waiting for message");
             let message = self.rx.try_recv();
+            println!("got message");
 
             match message {
                 Err(mpsc::TryRecvError::Empty) => {
@@ -128,21 +133,15 @@ impl ProducerServer {
 
             // process existing clients - go backwards as list will change length
             for i in (0..client_list.len()).rev() {
+                println!("loop");
                 let c = &mut client_list[i];
-
                 match c.state() {
-                    BufferState::Pending => {
-                        c.process_auth();
-                    },
-
-                    BufferState::Active => {
-                        c.process_data(&mut topic_list);
-                    },
-
-                    BufferState::Closed => {
+                    BufferState::Closed =>  {
                         client_list.remove(i);
                     },
-
+                    _ => {
+                        c.process(&mut topic_list);
+                    }
                 }
             }
             thread::sleep(Duration::from_millis(100))

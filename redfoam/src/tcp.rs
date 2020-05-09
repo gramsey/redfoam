@@ -22,7 +22,9 @@ pub fn run_server(addr : String) {
         match stream {
             Ok(stream) => {
                 stream.set_nonblocking(true).expect("set_nonblocking call failed");
+                println!("sending stream");
                 tx.send(stream).unwrap();
+                println!("sent stream");
             },
 
             Err(_e) => {
