@@ -1,9 +1,7 @@
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc;
 use std::thread;
-
 use super::producer::{ProducerServer};
-
 
 pub fn run_server(addr : String) {
 
