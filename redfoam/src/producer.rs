@@ -131,34 +131,37 @@ impl ProducerClient {
 
 pub struct ProducerServer {
     rx :  mpsc::Receiver<TcpStream>,
+    client_list : Vec<ProducerClient>,
+    topic_list : TopicList,
 }
 impl ProducerServer {
     pub fn new (rx :  mpsc::Receiver<TcpStream>) -> ProducerServer {
-        ProducerServer { rx }
+        ProducerServer { 
+            rx : rx,
+            client_list : Vec::new(),
+            topic_list : TopicList::new(),
+        }
     }
 
-    pub fn run (&self) { 
-        let mut client_list : Vec<ProducerClient> = Vec::new();
-        let mut topic_list = TopicList::new();
-
+    pub fn run (&mut self) { 
         loop {
 
             match self.rx.try_recv() {
                 Ok(instream) => {
                     println!("creating new client");
                     let c = ProducerClient::new(instream);
-                    client_list.push(c);
+                    self.client_list.push(c);
                 },
                 Err(mpsc::TryRecvError::Empty) => { }, // no new stream - do nothing
                 Err(_e) => { panic!("  OOOPSS");  }
             }
 
-            client_list.retain(|c| match c.state() {
+            self.client_list.retain(|c| match c.state() {
                 BufferState::Closed => false, _ => true 
             });
 
-            for c in client_list.iter_mut() {
-                c.process(&mut topic_list);
+            for c in self.client_list.iter_mut() {
+                c.process(&mut self.topic_list);
             }
 
 
