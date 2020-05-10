@@ -142,41 +142,26 @@ impl ProducerServer {
         let mut topic_list = TopicList::new();
 
         loop {
-            // add new client if sent
-            //
-            println!("waiting for message");
-            let message = self.rx.try_recv();
-            println!("got message");
 
-            match message {
-                Err(mpsc::TryRecvError::Empty) => {
-                    //no new stream do nothing
-                },
-
+            match self.rx.try_recv() {
                 Ok(instream) => {
                     println!("creating new client");
                     let c = ProducerClient::new(instream);
                     client_list.push(c);
                 },
-                
-                Err(_e) => {
-                    println!("  OOOPSS");  //todo: proper error handling
-                }
+                Err(mpsc::TryRecvError::Empty) => { }, // no new stream - do nothing
+                Err(_e) => { panic!("  OOOPSS");  }
             }
 
-            // process existing clients - go backwards as list will change length
-            for i in (0..client_list.len()).rev() {
-                println!("loop");
-                let c = &mut client_list[i];
-                match c.state() {
-                    BufferState::Closed =>  {
-                        client_list.remove(i);
-                    },
-                    _ => {
-                        c.process(&mut topic_list);
-                    }
-                }
+            client_list.retain(|c| match c.state() {
+                BufferState::Closed => false, _ => true 
+            });
+
+            for c in client_list.iter_mut() {
+                c.process(&mut topic_list);
             }
+
+
             thread::sleep(Duration::from_millis(100))
         }
     }
