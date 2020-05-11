@@ -1,6 +1,8 @@
 use std::io::{Read, ErrorKind};
 use std::convert::TryInto;
 
+use super::er::Er;
+
 pub const BUFF_SIZE : usize = 1024;
 
 
@@ -22,15 +24,18 @@ impl Buff {
         }
     }
 
-    pub fn read_data(&mut self, stream : &mut impl Read) -> () {
+    pub fn read_data(&mut self, stream : &mut impl Read) -> Result<(), Er>  {
         match stream.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
             Ok(size) => {
                 self.buff_pos += size as u32;
+                println!("read_data buff_pos {}, rec_size {}, rec_pos {}, rec_upto {}", self.buff_pos, self.rec_size, self.rec_pos, self.rec_upto);
+                Ok(())
             },
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                Err(Er::NotReady)
             },
-            Err(_e) => {
-                panic!("Error trying to read into clientbuff"); 
+            Err(e) => {
+                Err(Er::ClientTcpRead(e))
             },
         }
 
@@ -70,6 +75,7 @@ impl Buff {
     }
 
     pub fn has_bytes_to_read(&self, n : u32) -> bool {
+        println!("buff_pos {}, rec_pos {}", self.buff_pos, self.rec_pos);
         self.buff_pos >= self.rec_pos + n 
     }
 
@@ -95,6 +101,7 @@ impl Buff {
     }
 
     pub fn reset(&mut self) {
+        println!("reset");
         // update for next read
         let size = self.read_to() as u32 - self.rec_pos;
         self.rec_pos += size;
@@ -110,6 +117,7 @@ impl Buff {
 
         // if record is completely written reset
         if self.is_end_of_record() {
+            println!("is end of record");
             self.rec_upto = 0;
             self.rec_size = 0;
         } else if self.rec_upto > self.rec_size {

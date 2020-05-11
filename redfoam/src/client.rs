@@ -26,8 +26,8 @@ impl Client {
     pub fn send(&mut self, content : String) -> Result<()> {
 
         let len : u32 = content.len() as u32;
-        let mess_type : u8 = 1; // 1 = auth
-        let topic_id : u16 = 1; // 1 = auth
+        let mess_type : u8 = 2; // 1 = producer
+        let topic_id : u16 = 1;
 
         self.io.write(&len.to_le_bytes())?;
         self.io.write(&[self.seq])?;
@@ -35,7 +35,6 @@ impl Client {
         self.io.write(&topic_id.to_le_bytes())?;
 
         self.io.write(content.as_bytes())?;
-        println!("sent {}", content);
         self.seq = self.seq % 255 + 1;
 
         Ok(())
