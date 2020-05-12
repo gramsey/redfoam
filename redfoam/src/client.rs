@@ -13,7 +13,7 @@ impl Client {
         
         let size = message.len() as u32;
         let mess_type : u8 = 1; // 1 = auth
-        let seq : u8 = 1;
+        let seq : u8 = 0;
 
         stream.write(&size.to_le_bytes())?;
         stream.write(&[seq])?;

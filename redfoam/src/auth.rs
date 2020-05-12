@@ -7,7 +7,7 @@ pub struct Auth {
     //client_id : u32,
 }
 impl Auth {
-    pub fn new(buff : &Buff) -> Result<Self, Er> {
+    pub fn new(buff : &Buff) -> Result<Option<Self>, Er> {
 
         if buff.is_end_of_record() {
 
@@ -24,12 +24,12 @@ impl Auth {
             println!("auth_token : {}", auth_token);
 
             if auth_token == "ANON" {
-                Ok(Auth {})
+                Ok(Some(Auth {}))
             } else {
                 Err(Er::BadAuth)
             }
         } else {
-            Err(Er::NotReady)
+            Ok(None)
         }
     }
 }

@@ -5,13 +5,31 @@ use std::time::Duration;
 
 use super::producer::{ProducerClient};
 use super::topic::{TopicList};
-use super::buff::Buff;
 use super::er::Er;
 
 pub enum BufferState {
     Pending,
     Active,
     Closed,
+}
+
+pub enum RecordType {
+    Auth,
+    Producer,
+    Consumer,
+    Undefined,
+}
+
+impl From<u8> for RecordType {
+    fn from(code : u8) -> Self {
+        match code {
+            1 => Self::Auth,
+            2 => Self::Producer,
+            3 => Self::Consumer,
+            _ => Self::Undefined,
+        }
+    }
+
 }
 
 macro_rules! make_server {
@@ -91,24 +109,5 @@ pub fn run_server(addr : String) {
                 panic!("connection failed");
             }
         }
-    }
-}
-
-pub fn read_header(buff : &mut Buff, old_seq : &u8) -> Option<(u8, u8)> {
-    if buff.rec_size == 0 && buff.has_bytes_to_read(6) {
-        println!("reading header");
-
-        buff.rec_size = buff.read_u32();
-
-        let expected_seq = old_seq % 255 + 1;
-        let seq = buff.read_u8();
-        if expected_seq != seq { panic!("message has invalid sequence") }
-
-        let rec_type = buff.read_u8();
-        println!("rec-type {}, size {}, seq {}", rec_type, buff.rec_size, seq);
-        Some((rec_type, seq))
-    } else {
-        println!("not enough data");
-        None
     }
 }

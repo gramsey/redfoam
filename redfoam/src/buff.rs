@@ -1,26 +1,61 @@
 use std::io::{Read, ErrorKind};
 use std::convert::TryInto;
+use std::mem;
 
 use super::er::Er;
 
 pub const BUFF_SIZE : usize = 1024;
 
+macro_rules! make_read_fn {
+    ($fn_name: ident, $fn_type : ty) => {
+
+        pub fn $fn_name (&mut self) -> Option<$fn_type> {
+            let size : usize = mem::size_of::<$fn_type>();
+            if self.has_n_bytes(size) {
+                let start = self.rec_pos as usize;
+                let end = start + size;
+                let result = <$fn_type>::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
+                self.rec_pos += size as u32;
+                Some(result)
+            } else {
+                None
+            }
+        }
+    }
+}
 
 pub struct Buff {
-    pub  rec_size : u32,
+    pub  rec_size : Option<u32>,
     pub buffer : [u8 ; BUFF_SIZE],
     buff_pos : u32,
     rec_pos : u32,
     rec_upto : u32,
+    pub seq : u8,
+    seq_checked : bool,
 }
 impl Buff {
     pub fn new() -> Buff {
         Buff {
-            rec_size : 0, // size of record excluding 4 byte size
+            rec_size : None, // size of record excluding 4 byte size
             buffer : [0; BUFF_SIZE], // actual buffer containing data
             buff_pos : 0, // position of end of buffer (read from tcp) 
             rec_pos : 0,  // position of last byte processed in buffer
             rec_upto : 0, // no of bytes processed so far in record
+            seq : 0,
+            seq_checked : false,
+        }
+    }
+
+    make_read_fn!(read_u16, u16);
+    make_read_fn!(read_u32, u32);
+    make_read_fn!(read_u64, u64);
+    pub fn read_u8 (&mut self) -> Option<u8> {
+        if self.has_n_bytes(1) {
+            let result = self.buffer[self.rec_pos as usize];
+            self.rec_pos += 1;
+            Some(result)
+        } else {
+            None
         }
     }
 
@@ -28,7 +63,6 @@ impl Buff {
         match stream.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
             Ok(size) => {
                 self.buff_pos += size as u32;
-                println!("read_data buff_pos {}, rec_size {}, rec_pos {}, rec_upto {}", self.buff_pos, self.rec_size, self.rec_pos, self.rec_upto);
                 Ok(size)
             },
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -40,46 +74,40 @@ impl Buff {
         }
     }
 
-    pub fn read_u8(&mut self) -> u8 {
-        let start = self.rec_pos as usize;
-        let result = self.buffer[start];
-        self.rec_pos += 1;
-        result
-    }
-    pub fn read_u16(&mut self) -> u16 {
-        let start = self.rec_pos as usize;
-        let end = start + 2;
-        let result = u16::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
-        self.rec_pos += 2;
-        result
-    }
-    pub fn read_u32(&mut self) -> u32 {
-        let start = self.rec_pos as usize;
-        let end = start + 4;
-        let result = u32::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
-        self.rec_pos += 4;
-        result
-    }
-    pub fn read_u64(&mut self) -> u64  {
-        let start = self.rec_pos as usize;
-        let end = start + 8;
-        let result = u64::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
-        self.rec_pos += 8;
-        result
+    pub fn check_seq(&mut self) -> Result<(),Er> {
+        if !self.seq_checked {
+
+            if let Some(s) = self.read_u8() {
+                println!("seq incoming {}, expencting {}", s, self.seq);
+                if s == self.seq { 
+                    self.seq_checked = true;
+                    Ok(())
+                } else {
+                    Err(Er::InvalidSequence) 
+                }
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        }
     }
 
     pub fn has_data(&self) -> bool {
         self.read_to() as u32 - self.rec_pos > 0
     }
 
-    pub fn has_bytes_to_read(&self, n : u32) -> bool {
-        println!("buff_pos {}, rec_pos {}", self.buff_pos, self.rec_pos);
-        self.buff_pos >= self.rec_pos + n 
+    fn has_n_bytes(&self, n : usize) -> bool {
+        self.buff_pos >= self.rec_pos + n as u32
     }
 
     pub fn is_end_of_record(&self) -> bool {
-        let size = self.read_to() as u32 - self.rec_pos;
-        self.rec_upto + size == self.rec_size 
+        if let Some(rec_size) = self.rec_size {
+            let size = self.read_to() as u32 - self.rec_pos;
+            self.rec_upto + size == rec_size 
+        } else {
+            false
+        }
     }
 
     pub fn data(&self) -> &[u8] {
@@ -87,14 +115,18 @@ impl Buff {
     }
 
     fn read_to(&self) -> usize {
-        let buff_toread = self.buff_pos - self.rec_pos;
-        let rec_toread = self.rec_size - self.rec_upto;
+        if let Some(rec_size) = self.rec_size {
+            let buff_toread = self.buff_pos - self.rec_pos;
+            let rec_toread = rec_size - self.rec_upto;
 
-        if buff_toread <=  rec_toread {
-            self.buff_pos as usize
+            if buff_toread <=  rec_toread {
+                self.buff_pos as usize
+            } else {
+                //read just up to end of record
+                (self.rec_pos + rec_toread) as usize
+            }
         } else {
-            //read just up to end of record
-            (self.rec_pos + rec_toread) as usize
+            panic!("trying to read when there is no size set : this should never happen!!!");
         }
     }
 
@@ -117,9 +149,9 @@ impl Buff {
         if self.is_end_of_record() {
             println!("is end of record");
             self.rec_upto = 0;
-            self.rec_size = 0;
-        } else if self.rec_upto > self.rec_size {
-            panic!("read past end of record? shouldn't happen...");
+            self.rec_size = None;
+            self.seq = self.seq.wrapping_add(1); //overflows at 255 + 1 back to zero
+            self.seq_checked = false;
         }
     }
 }

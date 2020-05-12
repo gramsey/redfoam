@@ -7,6 +7,7 @@ pub enum Er {
     NotReady,
     ClientTcpRead(io::Error),
     IsClosed,
+    InvalidSequence,
 }
 
 impl Display for Er {
@@ -21,6 +22,7 @@ impl Display for Er {
                 s.as_str()
             }
             Er::IsClosed => "Tried to process client that is already closed",
+            Er::InvalidSequence => "Sequence number on incoming request from client is invalid",
         };
         f.write_str(message)
     }

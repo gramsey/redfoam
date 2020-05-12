@@ -1,21 +1,18 @@
 use std::net::{TcpStream};
 use std::io::Write;
-
 use super::topic::{TopicList};
 use super::buff::{Buff};
-use super::tcp;
-use super::tcp::BufferState;
+use super::tcp::{BufferState, RecordType};
 use super::auth::Auth;
 use super::er::Er;
-
 
 pub struct ProducerClient {
     state : BufferState,
     buff : Buff,
     tcp : TcpStream,
-    seq : u8,
-    rec_type : u8,
-    topic_id : u16,
+    auth : Option<Auth>,
+    rec_type : Option<RecordType>,
+    topic_id : Option<u16>,
 }
 impl ProducerClient {
     pub fn new (stream : TcpStream) -> ProducerClient {
@@ -25,56 +22,52 @@ impl ProducerClient {
             state : BufferState::Pending, 
             buff : buff,
             tcp : stream,
-            seq : 0,
-            rec_type : 0, 
-            topic_id : 0,
+            auth : None,
+            rec_type : None, 
+            topic_id : None,
         }
     }
 
     pub fn process(&mut self, topic_list : &mut TopicList) -> Result<(),Er> {
 
         self.buff.read_data(&mut self.tcp)?; 
-        
-        println!("check for header");
-        if let Some((rec_type, seq)) = tcp::read_header(&mut self.buff, &self.seq) {
-            self.rec_type = rec_type;
-            self.seq = seq;
-        }
-        println!("process, rec_size {}, rec_type {}, seq {}, ", self.buff.rec_size, self.rec_type, self.seq);
+        if self.buff.rec_size.is_none() { self.buff.rec_size = self.buff.read_u32(); }
+        self.buff.check_seq()?;
+        if self.rec_type.is_none() { self.rec_type = self.buff.read_u8().map(|r| r.into()) }
 
-        match self.state() {
-            BufferState::Pending => {
-                let _auth = Auth::new(&mut self.buff)?;
-                println!("auth ok");
-                self.state = BufferState::Active;
-                self.buff.reset();
+        match self.rec_type {
+            Some(RecordType::Auth) => {
+                self.auth = Auth::new(&mut self.buff)?;
+                if self.auth.is_some() {
+                        self.state = BufferState::Active;
+                        self.rec_type = None;
+                        self.buff.reset();
+                }
                 Ok(())
             }, 
 
-            BufferState::Active => {
-                println!("process data...");
+            Some(RecordType::Producer) => {
+                if self.auth.is_some() {
+                    if self.topic_id.is_none() { self.topic_id = self.buff.read_u16(); }
 
-                if self.rec_type == 2 && self.topic_id == 0 && self.buff.has_bytes_to_read(2) {
-                    println!("setting topic_id");
-                    self.topic_id = self.buff.read_u16();
-                }
+                    if self.buff.has_data() {
+                        if let Some(topic_id) = self.topic_id {
+                            topic_list.write(topic_id, self.buff.data());
 
-                if self.buff.has_data() && self.topic_id != 0 {
-                    println!("writing data to file");
-                    topic_list.write(self.topic_id, self.buff.data());
-
-                    if self.buff.is_end_of_record() {
-                        let idx = topic_list.end_record(self.topic_id);
-                        self.tcp.write(&[self.seq]).unwrap();
-                        self.tcp.write(&idx.to_le_bytes()).unwrap();
-                        self.rec_type = 0;
-                        self.topic_id = 0;
+                            if self.buff.is_end_of_record() {
+                                let idx = topic_list.end_record(topic_id);
+                                self.tcp.write(&[self.buff.seq]).unwrap();
+                                self.tcp.write(&idx.to_le_bytes()).unwrap();
+                                self.rec_type = None;
+                                self.topic_id = None;
+                            }
+                            self.buff.reset();
+                        }
                     }
-                    self.buff.reset();
                 }
                 Ok(())
             },
-            BufferState::Closed => Err(Er::IsClosed)
+            _ => { Ok(()) },
         }
     }
 
