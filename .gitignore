@@ -11,3 +11,4 @@ redfoam/Cargo.lock
 
 # vim files
 **/*.swp
+**/*.swo

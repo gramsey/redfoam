@@ -24,22 +24,20 @@ impl Buff {
         }
     }
 
-    pub fn read_data(&mut self, stream : &mut impl Read) -> Result<(), Er>  {
+    pub fn read_data(&mut self, stream : &mut impl Read) -> Result<usize, Er>  {
         match stream.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
             Ok(size) => {
                 self.buff_pos += size as u32;
                 println!("read_data buff_pos {}, rec_size {}, rec_pos {}, rec_upto {}", self.buff_pos, self.rec_size, self.rec_pos, self.rec_upto);
-                Ok(())
+                Ok(size)
             },
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                Err(Er::NotReady)
+                Ok(0)
             },
             Err(e) => {
                 Err(Er::ClientTcpRead(e))
             },
         }
-
-
     }
 
     pub fn read_u8(&mut self) -> u8 {

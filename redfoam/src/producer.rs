@@ -1,24 +1,15 @@
-use std::sync::mpsc;
 use std::net::{TcpStream};
-use std::time::Duration;
-use std::thread;
 use std::io::Write;
 
 use super::topic::{TopicList};
 use super::buff::{Buff};
 use super::tcp;
+use super::tcp::BufferState;
 use super::auth::Auth;
 use super::er::Er;
 
-enum BufferState {
-    Pending,
-    Active,
-    Closed,
-}
 
-make_server!(ProducerServer, ProducerClient);
-
-struct ProducerClient {
+pub struct ProducerClient {
     state : BufferState,
     buff : Buff,
     tcp : TcpStream,
@@ -27,7 +18,7 @@ struct ProducerClient {
     topic_id : u16,
 }
 impl ProducerClient {
-    fn new (stream : TcpStream) -> ProducerClient {
+    pub fn new (stream : TcpStream) -> ProducerClient {
         let buff = Buff::new();
 
         ProducerClient {
@@ -40,11 +31,9 @@ impl ProducerClient {
         }
     }
 
-    fn process(&mut self, topic_list : &mut TopicList) {
-        match self.buff.read_data(&mut self.tcp) {
-            Ok(_) | Err(Er::NotReady) => {},
-            Err(_) => {panic!("error reading tcp");}
-        };
+    pub fn process(&mut self, topic_list : &mut TopicList) -> Result<(),Er> {
+
+        self.buff.read_data(&mut self.tcp)?; 
         
         println!("check for header");
         if let Some((rec_type, seq)) = tcp::read_header(&mut self.buff, &self.seq) {
@@ -55,19 +44,11 @@ impl ProducerClient {
 
         match self.state() {
             BufferState::Pending => {
-                match Auth::new(&mut self.buff) {
-                    Ok(_) => {
-                        self.state = BufferState::Active;
-                    }, 
-
-                    Err(Er::NotReady) =>  {},
-
-                    Err(_) => {
-                        self.state = BufferState::Closed;
-                        panic!("problem with auth");
-                    }, 
-                }
+                let _auth = Auth::new(&mut self.buff)?;
+                println!("auth ok");
+                self.state = BufferState::Active;
                 self.buff.reset();
+                Ok(())
             }, 
 
             BufferState::Active => {
@@ -91,12 +72,13 @@ impl ProducerClient {
                     }
                     self.buff.reset();
                 }
+                Ok(())
             },
-            BufferState::Closed => (),
+            BufferState::Closed => Err(Er::IsClosed)
         }
     }
 
-    fn state(&self) -> &BufferState {
+    pub fn state(&self) -> &BufferState {
         &self.state
     }
 }
