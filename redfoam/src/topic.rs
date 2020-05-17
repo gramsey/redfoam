@@ -3,11 +3,17 @@ use std::io::{Write, SeekFrom, Seek};
 use std::str;
 use std::collections::HashMap;
 
+use super::buff::Buff;
+use super::er::Er;
+
+
 pub struct Topic {
     index : u64,
     data_file : File,
     index_file : File,
     current_producer : Option<u32>,
+    data_buff : Option<Buff>,
+    index_buff : Option<Buff>,
 }
 impl Topic {
     // new handle, topic must already exist as a sym link
@@ -23,6 +29,8 @@ impl Topic {
             data_file : f_data,
             index_file : f_index,
             current_producer : None,
+            data_buff : None,
+            index_buff : None,
         }
     }
 
@@ -43,7 +51,51 @@ impl Topic {
 
         idx
     }
+
+    pub fn read_index(&mut self, seq : u8) -> Result<Option<&[u8]>,Er> {
+        let buff = self.index_buff.get_or_insert(Buff::new());
+        if seq == buff.seq {
+            Ok(Some(buff.data()))
+        } else {
+            if seq == buff.seq + 1 {
+                let size = buff.read_data(&mut self.index_file)?;
+                if size == 0 {
+                    Ok(None)
+                } else { 
+                    Ok(Some(buff.data()))
+                }
+            } else {
+                Err(Er::InvalidSequence)
+            }
+        }
+    }
+    pub fn read_data(&mut self, seq : u8) -> Result<Option<&[u8]>,Er> {
+        let buff = self.data_buff.get_or_insert(Buff::new());
+        if seq == buff.seq {
+            Ok(Some(buff.data()))
+        } else {
+            if seq == buff.seq + 1 {
+                let size = buff.read_data(&mut self.data_file)?;
+                if size == 0 {
+                    Ok(None)
+                } else { 
+                    Ok(Some(buff.data()))
+                }
+            } else {
+                Err(Er::InvalidSequence)
+            }
+        }
+    }
+/*
+    pub fn read_data(&mut self, seq : u8) -> Result<Option<&[u8]>,Er> {
+        self.data_buff.get_or_insert(Buff::new());
+        read_file(self.data_file, &mut self.data_buff.unwrap(), seq)
+    }
+    */
+
+
 }
+
 
 pub struct TopicList {
     topic_names : HashMap<String, u16>,

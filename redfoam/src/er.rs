@@ -8,6 +8,7 @@ pub enum Er {
     ClientTcpRead(io::Error),
     IsClosed,
     InvalidSequence,
+    CantReadIndexFile(io::Error),
 }
 
 impl Display for Er {
@@ -23,6 +24,10 @@ impl Display for Er {
             }
             Er::IsClosed => "Tried to process client that is already closed",
             Er::InvalidSequence => "Sequence number on incoming request from client is invalid",
+            Er::CantReadIndexFile(e) => {
+                s = format!("Failed to read topic index file :{}", e);
+                s.as_str()
+            }
         };
         f.write_str(message)
     }
