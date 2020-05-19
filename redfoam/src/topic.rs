@@ -14,6 +14,8 @@ pub struct Topic {
     current_producer : Option<u32>,
     data_buff : Option<Buff>,
     index_buff : Option<Buff>,
+    pub data_offset : u64,
+    pub index_offset : u64,
 }
 impl Topic {
     // new handle, topic must already exist as a sym link
@@ -31,6 +33,8 @@ impl Topic {
             current_producer : None,
             data_buff : None,
             index_buff : None,
+            data_offset : 0,
+            index_offset : 0,
         }
     }
 
@@ -58,6 +62,7 @@ impl Topic {
             Ok(Some(buff.data()))
         } else {
             if seq == buff.seq + 1 {
+                self.index_offset = self.index_file.seek(SeekFrom::Current(0)).map_err(|e| Er::CantReadFile(e))?;
                 let size = buff.read_data(&mut self.index_file)?;
                 if size == 0 {
                     Ok(None)
@@ -75,6 +80,7 @@ impl Topic {
             Ok(Some(buff.data()))
         } else {
             if seq == buff.seq + 1 {
+                self.data_offset = self.data_file.seek(SeekFrom::Current(0)).map_err(|e| Er::CantReadFile(e))?;
                 let size = buff.read_data(&mut self.data_file)?;
                 if size == 0 {
                     Ok(None)
