@@ -16,8 +16,10 @@ pub enum BufferState {
 pub enum RecordType {
     Auth,
     Producer,
-    Consumer,
+    ConsumerFollowTopics,
     Undefined,
+    DataFeed,
+    IndexFeed,
 }
 
 impl From<u8> for RecordType {
@@ -25,7 +27,9 @@ impl From<u8> for RecordType {
         match code {
             1 => Self::Auth,
             2 => Self::Producer,
-            3 => Self::Consumer,
+            3 => Self::ConsumerFollowTopics,
+            4 => Self::DataFeed,
+            5 => Self::IndexFeed,
             _ => Self::Undefined,
         }
     }

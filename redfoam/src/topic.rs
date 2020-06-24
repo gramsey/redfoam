@@ -127,6 +127,12 @@ impl TopicList {
         *self.topic_names.get(name).unwrap()
     }
 
+    pub fn get_topics(&self, _filter : &str) -> Result<Option<Vec<u16>>,Er> {
+        let mut x : Vec<u16> = Vec::new();
+        x.push(1);
+        Ok(Some(x))
+    }
+
     pub fn write(&mut self, topic_id : u16, data : &[u8]) -> usize {
         let written = self.topics.get_mut(&topic_id).unwrap().write(data);
         println!(" wrote {}", written);

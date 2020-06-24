@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 //use std::convert;
 use std::io;
+use std::sync::mpsc;
 
 pub enum Er {
     BadAuth,
@@ -9,6 +10,7 @@ pub enum Er {
     IsClosed,
     InvalidSequence,
     CantReadFile(io::Error),
+    FailedToReturnMessage(mpsc::SendError<Vec<u8>>),
 }
 
 impl Display for Er {
@@ -25,6 +27,10 @@ impl Display for Er {
             Er::IsClosed => "Tried to process client that is already closed",
             Er::InvalidSequence => "Sequence number on incoming request from client is invalid",
             Er::CantReadFile(e) => {
+                s = format!("Failed to read topic file :{}", e);
+                s.as_str()
+            },
+            Er::FailedToReturnMessage(e) => {
                 s = format!("Failed to read topic file :{}", e);
                 s.as_str()
             }
