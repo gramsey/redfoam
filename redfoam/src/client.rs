@@ -29,7 +29,7 @@ impl ReadClient {
     }
 
     pub fn run(&mut self) -> Result<(), Er> {
-        let mut messages = Messages::new(0, 0);
+        let mut messages: Option<Messages> = None;
         let mut record_type: Option<RecordType> = None;
         loop {
 
@@ -43,16 +43,46 @@ impl ReadClient {
                 Some(RecordType::DataFeed) => {
                     /* end_of_rec here can be a partial message - it refers to packet */
                     if self.tcp_buff.is_end_of_record() {
-                        messages.push_data(self.tcp_buff.data());
-                        record_type = None;
+                        if let Some(mgs) = &mut messages {
+                            (*mgs).push_data(self.tcp_buff.data());
+                        } else {
+                            return Err(Er::NoConsumerStart)
+                        }
                     }
                 },
 
                 Some(RecordType::IndexFeed) => {
                     if let Some(idx) = self.tcp_buff.read_u64() {
-                        messages.push_index(idx);
+                        if let Some(mgs) = &mut messages {
+                            (*mgs).push_index(idx);
+                            record_type = None;
+                        } else {
+                            return Err(Er::NoConsumerStart)
+                        }
+                    }
+                },
+
+                Some(RecordType::ConsumerStart) => {
+                    if self.tcp_buff.is_end_of_record() {
+                        let data_start;
+                        let index_start;
+
+                        if let Some(offset) = self.tcp_buff.read_u64() {
+                            data_start = offset;
+                        } else {
+                            return Err(Er::FailedToReadDataStart);
+                        }
+
+                        if let Some(offset) = self.tcp_buff.read_u64() {
+                            index_start = offset;
+                        } else {
+                            return Err(Er::FailedToReadDataStart);
+                        }
+
+                        messages = Some(Messages::new(data_start, index_start));
                         record_type = None;
                     }
+
                 },
 
                 None => { break;},
@@ -60,9 +90,11 @@ impl ReadClient {
             }
 
             // write any new whole messages to output
-            for m in &mut messages {
-                if let Err(e) = self.out.send(m) {
-                    return Err(Er::FailedToReturnMessage(e))
+            if let Some(mess) = &mut messages {
+                for m in &mut *mess {
+                    if let Err(e) = self.out.send(m) {
+                        return Err(Er::FailedToReturnMessage(e))
+                    }
                 }
             }
         }
@@ -70,7 +102,7 @@ impl ReadClient {
     }
 }
 
-pub fn getReciever (topics : String, url : String, auth : String) -> std::io::Result<mpsc::Receiver<Vec<u8>>> {
+pub fn get_reciever (topics : String, url : String, auth : String) -> std::io::Result<mpsc::Receiver<Vec<u8>>> {
     let (tx, rx) : (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) = mpsc::channel();
     let mut tcp = TcpStream::connect(url)?;
 

@@ -20,6 +20,7 @@ pub enum RecordType {
     Undefined,
     DataFeed,
     IndexFeed,
+    ConsumerStart,
 }
 
 impl From<u8> for RecordType {
@@ -30,6 +31,7 @@ impl From<u8> for RecordType {
             3 => Self::ConsumerFollowTopics,
             4 => Self::DataFeed,
             5 => Self::IndexFeed,
+            6 => Self::ConsumerStart,
             _ => Self::Undefined,
         }
     }

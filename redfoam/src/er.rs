@@ -11,6 +11,8 @@ pub enum Er {
     InvalidSequence,
     CantReadFile(io::Error),
     FailedToReturnMessage(mpsc::SendError<Vec<u8>>),
+    NoConsumerStart,
+    FailedToReadDataStart,
 }
 
 impl Display for Er {
@@ -34,6 +36,8 @@ impl Display for Er {
                 s = format!("Failed to read topic file :{}", e);
                 s.as_str()
             }
+            Er::NoConsumerStart => "Recieved content from server, but never recieved the header message containing start references.",
+            Er::FailedToReadDataStart => "Could not read expected start value from consumer header message",
         };
         f.write_str(message)
     }
