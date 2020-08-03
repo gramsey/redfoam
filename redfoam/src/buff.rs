@@ -155,3 +155,29 @@ impl Buff {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_buffer () {
+        let mut b = Buff::new();
+
+
+        let result1 = b.read_u8();
+        assert!(result1.is_none(), "should be none as pointer is still at 0");
+
+        b.buffer[0] = 0x44u8;
+        b.buff_pos+=1;
+
+        let result2 = b.read_u8();
+        assert!(result2.is_some(), "should have read value for u8 successfully");
+        assert_eq!(Some(0x44u8), result2, "u8 value should match first element of array");
+
+        b.rec_size = Some(14);
+        assert_eq!(b.has_data(), false, "has_data() should return false as buffer pos was set to only 1 char");
+
+        assert_eq!(b.is_end_of_record(), false, "only one char read, but record size is 14 char, so not end of record");
+    }
+}
