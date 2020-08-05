@@ -36,7 +36,7 @@ pub struct Buff {
 impl Buff {
     pub fn new() -> Buff {
         Buff {
-            rec_size : None, // size of record excluding 4 byte size
+            rec_size : None, // size of record excluding 4 byte size and any other fixed size headers
             buffer : [0; BUFF_SIZE], // actual buffer containing data
             buff_pos : 0, // position of end of buffer (read from tcp) 
             rec_pos : 0,  // position of last byte processed in buffer
@@ -214,6 +214,7 @@ mod tests {
         let mut message : &[u8] = b"Eat My Shorts!"; 
 
         assert_eq!(b.data(), message, "should be full message 'Eat My Shorts!' without size bytes"); 
+        assert_eq!(b.is_end_of_record(), true, "should know it is at end of record");
         b.reset();
 
 
@@ -263,8 +264,45 @@ mod tests {
             Ok(sz) => assert_eq!(sz, 1660 - 1020, "checking read in another 640 bytes"),
             Err(e) => assert!(false, "read data failure with {}", e),
         }
+        b.reset();
+        assert_eq!(b.seq, 1, "sequence should still be 1");
+    }
 
+    #[test]
+    fn test_multirec() {
+        let s = String::from("hello world");
+        /* 0e= hex length of 'Eat My Shorts!' (14) */ 
+        let mut bstr : &[u8] = b"\x0e\x00\x00\x00Eat My Shorts!\x24\x00\x00\x00I have bumble bees in my back garden"; 
+        let mut b = Buff::new();
 
+        match b.read_data(&mut bstr) {
+            Ok(sz) => assert_eq!(sz, 58),
+            Err(e) => assert!(false, "read data failure with {}", e),
+        }
 
+        let result1 = b.read_u32();
+        assert!(result1.is_some(), "should be able to read u32");
+        assert_eq!(result1, Some(14), "should be size of data (14 or x0e)"); 
+
+        b.rec_size=result1;
+
+        let mut message : &[u8] = b"Eat My Shorts!"; 
+
+        assert_eq!(b.data(), message, "should be full message 'Eat My Shorts!' without size bytes"); 
+        b.reset();
+        assert_eq!(b.seq, 1, "sequence should be 2");
+
+        let result2 = b.read_u32();
+        assert!(result2.is_some(), "should be able to read u32");
+        assert_eq!(result2, Some(36), "should be size of data (36 or x24)"); 
+
+        b.rec_size=result2;
+
+        let mut message2 : &[u8] = b"I have bumble bees in my back garden"; 
+        assert_eq!(b.data(), message2, "should be full message 'I have bumble bees in my back garden' without size bytes"); 
+        b.reset();
+
+        assert_eq!(b.seq, 2, "sequence should be 2");
+        
     }
 }
