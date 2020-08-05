@@ -137,7 +137,7 @@ impl Buff {
         self.rec_pos += size;
         self.rec_upto += size;
 
-        // if all buffer is read reset 
+        // if all buffer is read reset to start 
         if self.buff_pos == self.rec_pos {
             self.buff_pos = 0;
             self.rec_pos = 0;
@@ -161,7 +161,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_buffer () {
+    fn test_buffbasic() {
         let mut b = Buff::new();
 
 
@@ -179,5 +179,92 @@ mod tests {
         assert_eq!(b.has_data(), false, "has_data() should return false as buffer pos was set to only 1 char");
 
         assert_eq!(b.is_end_of_record(), false, "only one char read, but record size is 14 char, so not end of record");
+        
+        let x_u16: u16 = 309;
+        let a_u16 = x_u16.to_le_bytes();
+
+        b.buffer[1] = a_u16[0];
+        b.buffer[2] = a_u16[1];
+        b.buff_pos+=5;
+
+        let result3 = b.read_u16();
+        assert!(result3.is_some(), "should have read value for u16 successfully");
+        assert_eq!(Some(309), result3, "u16 value should be 309");
+
+    }
+
+    #[test]
+    fn test_readbuff() {
+        let s = String::from("hello world");
+        /* 0e= hex length of 'Eat My Shorts!' (14) */ 
+        let mut bstr : &[u8] = b"\x0e\x00\x00\x00Eat My Shorts!"; 
+        let mut b = Buff::new();
+
+        match b.read_data(&mut bstr) {
+            Ok(sz) => assert_eq!(sz, 18),
+            Err(e) => assert!(false, "read data failure with {}", e),
+        }
+
+        let result1 = b.read_u32();
+        assert!(result1.is_some(), "should be able to read u32");
+        assert_eq!(result1, Some(14), "should be size of data (14 or x0e)"); 
+
+        b.rec_size=result1;
+
+        let mut message : &[u8] = b"Eat My Shorts!"; 
+
+        assert_eq!(b.data(), message, "should be full message 'Eat My Shorts!' without size bytes"); 
+        b.reset();
+
+
+    }
+
+    #[test]
+    fn test_fullbuff() {
+        let s = String::from("hello world");
+        /* 0e= hex length of 'Eat My Shorts!' (14) */ 
+        let mut bstr : &[u8] = b"\x7c\x06\x00\x00012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
+        0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"; 
+
+        let mut b = Buff::new();
+
+        match b.read_data(&mut bstr) {
+            Ok(sz) => assert_eq!(sz, 1024),
+            Err(e) => assert!(false, "read data failure with {}", e),
+        }
+
+        let result1 = b.read_u32();
+        assert!(result1.is_some(), "should be able to read u32");
+        assert_eq!(result1, Some(1660), "should be size of data (14 or x0e)"); 
+
+        b.rec_size=result1;
+        assert_eq!(b.data().len(), 1020 as usize, "should be the first 1020 bytes of message"); 
+        assert_eq!(b.is_end_of_record(), false, "haven't read full record"); 
+        assert_eq!(bstr.len(), 1660 - 1020, "checking input string has 640 left");
+        
+        b.reset();
+
+        match b.read_data(&mut bstr) {
+            Ok(sz) => assert_eq!(sz, 1660 - 1020, "checking read in another 640 bytes"),
+            Err(e) => assert!(false, "read data failure with {}", e),
+        }
+
+
+
     }
 }
