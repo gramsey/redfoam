@@ -1,7 +1,8 @@
 use std::fs::{File, OpenOptions};
-use std::io::{Write, SeekFrom, Seek};
+use std::io::{Write, Read, SeekFrom, Seek};
 use std::str;
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 use super::buff::Buff;
 use super::er::Er;
@@ -14,10 +15,8 @@ pub struct Topic {
     data_file_read : File,
     index_file_read : File,
     current_producer : Option<u32>,
-    data_buff : Buff,
-    index_buff : Buff,
-    pub data_offset : u64,
-    pub index_offset : u64,
+    pub last_data_offset : u64,
+    pub last_index_offset : u64,
 }
 impl Topic {
     // new handle, topic must already exist as a sym link
@@ -45,10 +44,8 @@ impl Topic {
             data_file_read : f_data_read,
             index_file_read : f_index_read,
             current_producer : None,
-            data_buff : b_data,
-            index_buff : b_index,
-            data_offset : 0,
-            index_offset : 0,
+            last_data_offset : 0,
+            last_index_offset : 0,
         }
     }
 
@@ -70,41 +67,55 @@ impl Topic {
         idx
     }
 
-    pub fn read_index(&mut self, seq : u8) -> Result<Option<&[u8]>,Er> {
-        if seq == self.index_buff.seq + 1 { 
-            self.index_offset = self.index_file_read.seek(SeekFrom::Current(0)).map_err(|e| Er::CantReadFile(e))?;
-            let size = self.index_buff.read_data(&mut self.index_file_read)?;
-            self.index_buff.rec_size = Some(size as u32);               //this cast should never fail (usize -> u32) because read_data is constrained by buffer size 
-            self.index_buff.seq = seq;
-        }
+    pub fn read_index_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
 
-        if self.index_buff.seq != seq { return Err(Er::InvalidSequence) }
+        self.last_index_offset = self.index_file_read.seek(SeekFrom::Start(start)).map_err(|e| Er::CantReadFile(e))?;
 
-        if self.index_buff.rec_size == Some(0) {
-            Ok(None)
-        } else { 
-            Ok(Some(self.index_buff.data()))
+        match self.index_file_read.read(buf) {
+            Ok(size) => { Ok(size) },
+            Err(e) => { Err(Er::CantReadFile(e)) },
         }
     }
 
-    pub fn read_data(&mut self, seq : u8) -> Result<Option<&[u8]>,Er> {
-        if seq == self.data_buff.seq + 1 { 
-            self.data_offset = self.data_file_read.seek(SeekFrom::Current(0)).map_err(|e| Er::CantReadFile(e))?;
-            let size = self.data_buff.read_data(&mut self.data_file_read)?;
-            self.data_buff.rec_size = Some(size as u32);
-            self.data_buff.seq = seq;
+    pub fn read_data_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
+
+        self.last_index_offset = self.data_file_read.seek(SeekFrom::Start(start)).map_err(|e| Er::CantReadFile(e))?;
+
+        match self.data_file_read.read(buf) {
+            Ok(size) => { Ok(size) },
+            Err(e) => { Err(Er::CantReadFile(e)) },
+        }
+    }
+
+    fn read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
+        let mut buf : [u8; 16] = [0;16];
+        let position : u64;
+        let idx_size : u64;
+
+        // todo: if  rec_no % filesize == 0
+        if rec_no == 0 { 
+            idx_size = 8;
+            position = 0;
+        } else { 
+            idx_size = 16; 
+            position = (rec_no - 1) * 8;
         }
 
-        if self.data_buff.seq != seq { return Err(Er::InvalidSequence) }
+        let idx = self.index_file_read.seek(SeekFrom::Start(position)).unwrap();
+        self.read_index_into(&mut buf[..idx_size as usize], position)?;
 
-        if self.data_buff.rec_size == Some(0) {
-            Ok(None)
+        let start : u64;
+        let data_size;
+        if rec_no == 0 { 
+            data_size = u64::from_le_bytes(buf[..8].try_into().expect("should always be 8 bytes -> u64"));
+            Ok((0, data_size))
         } else { 
-            Ok(Some(self.data_buff.data()))
+            start = u64::from_le_bytes(buf[..8].try_into().expect("should always be 8 bytes -> u64"));
+            let end = u64::from_le_bytes(buf[8..16].try_into().expect("should always be 8 bytes -> u64"));
+            Ok((start, end - start))
         }
     }
 }
-
 
 pub struct TopicList {
     topic_names : HashMap<String, u16>,
@@ -161,26 +172,47 @@ mod tests {
         assert_eq!(t.index, idx + 1, "checking index is incremented by one");
     }
 
+    #[test]
+    fn test_readfirstrecord() {
+        let mut t = Topic::new();
+        let mut buf : [u8; 8] = [0;8];
+
+        match t.read_index_into(&mut buf, 0) {
+            Err(e) => assert!(false, "error reading index {}", e),
+            Ok(n) => assert_eq!(n, 8, "check 8 index bytes read"),
+        }
+
+        let idx = u64::from_le_bytes(buf);
+
+        assert_ne!(idx, 0, "check index value is not zero");
+
+        match t.read_data_into(&mut buf[..idx as usize], 0) {
+            Err(e) => assert!(false, "error reading data {}", e),
+            Ok(n) => assert_eq!(n, idx as usize, "check {} data bytes read", n),
+        }
+
+        
+    }
 
     #[test]
-    fn test_topicreadindex() {
+    fn test_readindex() {
         let mut t = Topic::new();
+        match t.read_index(1) {
+            Ok((position, size)) => {
+                assert_eq!(position, 5);
+                assert_eq!(size, 12);
+            }
+            Err(e) => assert!(false, "error on read index {}", e),
+        }
 
         match t.read_index(0) {
-            Ok(d) => assert!(d.is_none()), 
-            Err(e) => assert!(false, "failed with error {}", e),
+            Ok((position, size)) => {
+                assert_eq!(position, 0);
+                assert_eq!(size, 5);
+            }
+            Err(e) => assert!(false, "error on read index {}", e),
         }
-
-        match t.read_index(1) {
-            Ok(d) => {
-                match d {
-                    Some(x) => assert_eq!(x.len() % 8, 0, "should be multiple of 8 bytes (u64)"),
-                    None => assert!(false, "index file should have something in it"),
-                }
-            },
-            Err(e) => assert!(false, "failed with error {}", e),
-        }
-
     }
+
 }
 
