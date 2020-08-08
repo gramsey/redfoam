@@ -10,6 +10,7 @@ pub enum Er {
     IsClosed,
     InvalidSequence,
     CantReadFile(io::Error),
+    InotifyError(io::Error),
     FailedToReturnMessage(mpsc::SendError<Vec<u8>>),
     NoConsumerStart,
     FailedToReadDataStart,
@@ -28,6 +29,10 @@ impl Display for Er {
             }
             Er::IsClosed => "Tried to process client that is already closed",
             Er::InvalidSequence => "Sequence number on incoming request from client is invalid",
+            Er::InotifyError(e) => {
+                s = format!("Problem trying to use inotify (linux) : {}", e);
+                s.as_str()
+            },
             Er::CantReadFile(e) => {
                 s = format!("Failed to read topic file :{}", e);
                 s.as_str()
