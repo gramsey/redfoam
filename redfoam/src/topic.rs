@@ -1,11 +1,10 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Write, Read, SeekFrom, Seek};
-use inotify::{ Inotify, WatchMask, };
+use inotify::{ Inotify, WatchMask, WatchDescriptor };
 use std::str;
 use std::collections::HashMap;
 use std::convert::TryInto;
 
-use super::buff::Buff;
 use super::er::Er;
 
 
@@ -13,8 +12,6 @@ pub struct Topic {
     index : u64,
     data_file : File,
     index_file : File,
-    data_file_name : String,
-    index_file_name : String,
     current_producer : Option<u32>,
     pub last_data_offset : u64,
     pub last_index_offset : u64,
@@ -35,18 +32,10 @@ impl Topic {
 
         let idx = f_index.seek(SeekFrom::End(0)).unwrap() / 8;
 
-        let mut b_data = Buff::new();
-        b_data.rec_size=Some(0);
-
-        let mut b_index = Buff::new();
-        b_index.rec_size=Some(0);
-
         Topic {
             index : idx,
             data_file : f_data,
             index_file : f_index,
-            data_file_name : data_fname,
-            index_file_name : index_fname,
             current_producer : None,
             last_data_offset : 0,
             last_index_offset : 0,
@@ -67,16 +56,16 @@ impl Topic {
         self.index += 1;
 
         let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap();
-        let file_position_bytes = (file_position as u64).to_le_bytes(); // get start instead of end position
+        let file_position_bytes = (file_position as u64).to_le_bytes();
         self.index_file.write( &file_position_bytes).unwrap();
         self.current_producer = None;
-
         idx
     }
 
     pub fn read_index_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
 
-        self.last_index_offset = self.index_file.seek(SeekFrom::Start(start)).map_err(|e| Er::CantReadFile(e))?;
+        self.index_file.seek(SeekFrom::Start(start))
+            .map_err(|e| Er::CantReadFile(e))?;
 
         match self.index_file.read(buf) {
             Ok(size) => { Ok(size) },
@@ -86,7 +75,8 @@ impl Topic {
 
     pub fn read_data_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
 
-        self.last_index_offset = self.data_file.seek(SeekFrom::Start(start)).map_err(|e| Er::CantReadFile(e))?;
+        self.data_file.seek(SeekFrom::Start(start))
+            .map_err(|e| Er::CantReadFile(e))?;
 
         match self.data_file.read(buf) {
             Ok(size) => { Ok(size) },
@@ -108,7 +98,7 @@ impl Topic {
             position = (rec_no - 1) * 8;
         }
 
-        let idx = self.index_file.seek(SeekFrom::Start(position)).unwrap();
+        self.index_file.seek(SeekFrom::Start(position)).unwrap();
         self.read_index_into(&mut buf[..idx_size as usize], position)?;
 
         let start : u64;
@@ -127,21 +117,23 @@ impl Topic {
 pub struct TopicList {
     topic_names : HashMap<String, u16>,
     topics : HashMap<u16, Topic>,
-    notify : Inotify,
+    pub watchers : HashMap<WatchDescriptor, u16>,
+    pub notify : Inotify,
 }
 impl TopicList {
 
     pub fn new (is_producer : bool) -> TopicList {
-        println!("creating topic list");
-        let mut topic_names : HashMap<String, u16> = HashMap::new();
-        let mut topics : HashMap<u16, Topic> = HashMap::new();
 
-        let mut notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
+        let topic_names : HashMap<String, u16> = HashMap::new();
+        let topics : HashMap<u16, Topic> = HashMap::new();
+        let watchers : HashMap<WatchDescriptor, u16> = HashMap::new();
+        let notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
 
         let mut t = TopicList {
             topic_names,
             topics,
             notify,
+            watchers,
         };
 
         t.add_topic(1, String::from("test"), is_producer);
@@ -150,14 +142,13 @@ impl TopicList {
 
     fn add_topic(&mut self, topic_id : u16, topic_name : String, is_producer : bool) -> Result<(),Er>{
 
-        let mut t = Topic::new(&topic_name, is_producer);
+        let t = Topic::new(&topic_name, is_producer);
 
         if !is_producer {
-            self.notify.add_watch(t.index_file_name.clone(), WatchMask::MODIFY)
+            let folder = format!("/tmp/{}", topic_name);
+            let wd = self.notify.add_watch(folder, WatchMask::MODIFY)
                 .map_err(|e| Er::InotifyError(e))?;
-
-            self.notify.add_watch(t.data_file_name.clone(), WatchMask::MODIFY)
-                .map_err(|e| Er::InotifyError(e))?;
+            self.watchers.insert(wd, topic_id);
         }
 
         self.topics.insert(topic_id, t);
@@ -186,34 +177,6 @@ impl TopicList {
         self.topics.get_mut(&topic_id).unwrap().end_rec()
     }
 
-    pub fn monitor_start(&mut self) -> Result<(),Er> {
-
-
-        let data_fname = format!("/tmp/{}/data", "test");
-        let index_fname = format!("/tmp/{}/index", "test");
-
-
-
-        Ok(())
-    }
-
-/*
-    pub fn poll(&mut self) -> Result<(),Er> {
-
-        let mut buffer = [0; 1024];
-
-        if let Some(nfy) = &mut self.notify {
-            let events = nfy.read_events(&mut buffer)
-                .map_err(|e| Er::InotifyError(e))?;
-
-            for event in events {
-                // Handle event
-            }
-        }
-
-        Ok(())
-    }
-    */
 
 }
 
@@ -272,6 +235,67 @@ mod tests {
             Err(e) => assert!(false, "error on read index {}", e),
         }
     }
+
+    #[test]
+    fn test_topiclist() {
+        let mut tl_producer = TopicList::new(true);
+        let mut tl_consumer = TopicList::new(false);
+
+        tl_producer.write(1,&b"TopicList test message"[..]);
+        tl_producer.end_record(1);
+
+        let mut buffer = [0; 1024];
+        let mut events = tl_consumer.notify.read_events(&mut buffer)
+            .expect("Error while reading events");
+
+        /* first event for writing to data file */
+        match events.next() {
+            Some(e) => {
+                match tl_consumer.watchers.get(&e.wd) {
+                    Some(topic_id) => assert_eq!(*topic_id, 1u16),
+                    None => assert!(false, "topic id missing from watcher list"),
+                }
+                match e.name {
+                    Some(name) => assert_eq!(name, "data"), 
+                    None => assert!(false, "event should have a file name"),
+                }
+            },
+            None => assert!(false, "missing event from inotify"),
+        }
+
+        /* second event for writing to index file */
+        match events.next() {
+            Some(e) => {
+                match tl_consumer.watchers.get(&e.wd) {
+                    Some(topic_id) => assert_eq!(*topic_id, 1u16),
+                    None => assert!(false, "topic id missing from watcher list"),
+                }
+                match e.name {
+                    Some(name) => assert_eq!(name, "index"), 
+                    None => assert!(false, "event should have a file name"),
+                }
+            },
+            None => assert!(false, "missing event from inotify"),
+        }
+    }
+
+
+
+/*
+    #[test]
+    fn test_update_event() {
+        let mut t_producer = Topic::new(&String::from("test"), true);
+        let mut t_consumer = Topic::new(&String::from("test"), false);
+        let written : usize = t_producer.write(&b"My Update Event"[..]);
+
+
+        t.end_rec();
+
+        
+
+        
+    }
+    */
 
 }
 

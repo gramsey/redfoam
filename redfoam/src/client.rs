@@ -11,7 +11,7 @@ use super::er::Er;
 
 pub struct ReadClient {
     io : TcpStream,
-    seq : u8,
+    _seq : u8,
     tcp_buff : Buff,
     out : mpsc::Sender<Vec<u8>>,
 }
@@ -21,7 +21,7 @@ impl ReadClient {
 
         ReadClient {
             io : tcp,
-            seq : 0,
+            _seq : 0,
             tcp_buff : Buff::new(),
             out : out,
         }
@@ -102,7 +102,7 @@ impl ReadClient {
     }
 }
 
-pub fn get_reciever (topics : String, url : String, auth : String) -> std::io::Result<mpsc::Receiver<Vec<u8>>> {
+pub fn get_reciever (_topics : String, url : String, auth : String) -> std::io::Result<mpsc::Receiver<Vec<u8>>> {
     let (tx, rx) : (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) = mpsc::channel();
     let mut tcp = TcpStream::connect(url)?;
 
