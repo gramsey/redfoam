@@ -26,7 +26,6 @@ impl Topic {
 
         if is_producer { f_options.append(true); } else { f_options.read(true); }
 
-
         let f_data = f_options.open(&data_fname).expect("cant open topic data file");
         let mut f_index = f_options.open(&index_fname).expect("cant open topic data file");
 
@@ -48,8 +47,6 @@ impl Topic {
         let written = self.data_file.write(slice).unwrap();
         written
     }
-
-    
 
     pub fn end_rec(&mut self) -> u64 {
         let idx = self.index;
@@ -82,6 +79,12 @@ impl Topic {
             Ok(size) => { Ok(size) },
             Err(e) => { Err(Er::CantReadFile(e)) },
         }
+    }
+
+    pub fn read_index_latest(&mut self, buf : &mut [u8]) -> Result<usize,Er> {
+        let size = self.read_index_into(buf, self.last_index_offset)?; 
+        self.last_index_offset += size as u64;
+        Ok(size)
     }
 
     fn read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
@@ -117,6 +120,7 @@ impl Topic {
 pub struct TopicList {
     topic_names : HashMap<String, u16>,
     topics : HashMap<u16, Topic>,
+    pub followers : HashMap<u16, Vec<u32>>,
     pub watchers : HashMap<WatchDescriptor, u16>,
     pub notify : Inotify,
 }
@@ -127,13 +131,15 @@ impl TopicList {
         let topic_names : HashMap<String, u16> = HashMap::new();
         let topics : HashMap<u16, Topic> = HashMap::new();
         let watchers : HashMap<WatchDescriptor, u16> = HashMap::new();
+        let followers : HashMap<u16, Vec<u32>> = HashMap::new();
         let notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
 
         let mut t = TopicList {
             topic_names,
             topics,
-            notify,
+            followers,
             watchers,
+            notify,
         };
 
         t.add_topic(1, String::from("test"), is_producer);
@@ -160,24 +166,33 @@ impl TopicList {
     pub fn get_topic(&self, name : &String) -> u16 {
         *self.topic_names.get(name).unwrap()
     }
-
+/*
     pub fn get_topics(&self, _filter : &str) -> Result<Option<Vec<u16>>,Er> {
         let mut x : Vec<u16> = Vec::new();
         x.push(1);
         Ok(Some(x))
     }
+    */
+    pub fn follow_topics(&self, _filter : &[u8]) -> Result<Option<Vec<u16>>,Er> {
+        let mut x : Vec<u16> = Vec::new();
+        x.push(1);
+        Ok(Some(x))
+    }
+
 
     pub fn write(&mut self, topic_id : u16, data : &[u8]) -> usize {
         let written = self.topics.get_mut(&topic_id).unwrap().write(data);
-        println!(" wrote {}", written);
         written
+    }
+
+    pub fn read_index(&mut self, topic_id : u16, data : &mut [u8]) -> Result<usize,Er> {
+        let n = self.topics.get_mut(&topic_id).unwrap().read_index_latest(data)?;
+        Ok(n)
     }
 
     pub fn end_record(&mut self, topic_id : u16) -> u64 {
         self.topics.get_mut(&topic_id).unwrap().end_rec()
     }
-
-
 }
 
 #[cfg(test)]

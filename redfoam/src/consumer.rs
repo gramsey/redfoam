@@ -1,5 +1,11 @@
 use std::net::{TcpStream};
-use std::io::Write;
+//use std::io::Write;
+use std::ffi::OsStr;
+use std::collections::HashMap;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
+
 use super::topic::{TopicList};
 use super::buff::{Buff};
 use super::tcp::{BufferState, RecordType};
@@ -7,38 +13,28 @@ use super::auth::Auth;
 use super::er::Er;
 
 pub struct ConsumerClient {
+    id : u32,
     state : BufferState,
     buff : Buff,
     tcp : TcpStream,
     auth : Option<Auth>,
     rec_type : Option<RecordType>,
-    topic_ids : Option<Vec<u16>>,
 }
 impl ConsumerClient {
-    pub fn new (stream : TcpStream) -> ConsumerClient {
+    pub fn new (id : u32, stream : TcpStream) -> ConsumerClient {
         let buff = Buff::new();
 
         ConsumerClient {
+            id : id,
             state : BufferState::Pending, 
             buff : buff,
             tcp : stream,
             auth : None,
             rec_type : None, 
-            topic_ids : None,
         }
     }
 
     pub fn process(&mut self, topic_list : &mut TopicList) -> Result<(),Er> {
-
-        if let Some(topics) = self.topic_ids {
-            for n in topics {
-                if let some(t) = topic::get_topic(n) {
-                    if let Some(data) = t.get_data() {
-                        self.tcp.write(data);
-                    }
-                }
-            }
-        }
 
         self.buff.read_data(&mut self.tcp)?; 
         if self.buff.rec_size.is_none() { self.buff.rec_size = self.buff.read_u32(); }
@@ -56,10 +52,11 @@ impl ConsumerClient {
                 Ok(())
             }, 
 
-            Some(RecordType::Consumer) => {
+            Some(RecordType::ConsumerStart) => {
                 if self.auth.is_some() {
 
                     if self.buff.has_data() {
+                        /*
                         if let Some(topic_id) = self.topic_id {
                             topic_list.write(topic_id, self.buff.data());
 
@@ -72,6 +69,7 @@ impl ConsumerClient {
                             }
                             self.buff.reset();
                         }
+                        */
                     }
                 }
                 Ok(())
@@ -81,7 +79,7 @@ impl ConsumerClient {
                 if self.auth.is_some() {
                     if self.buff.has_data() {
                         if self.buff.is_end_of_record() {
-                            let self.topics = topic::getTopics(self.buff.data())?;
+                            topic_list.follow_topics(self.buff.data())?;
                         }
                         self.buff.reset();
                         self.rec_type = None;
@@ -93,6 +91,14 @@ impl ConsumerClient {
         }
     }
 
+    pub fn send_index(&self, _buffer : &[u8]) {
+
+    }
+
+    pub fn send_data(&self, _buffer : &[u8]) {
+
+    }
+
     pub fn state(&self) -> &BufferState {
         &self.state
     }
@@ -101,23 +107,32 @@ impl ConsumerClient {
 
 pub struct ConsumerServer {
     rx :  mpsc::Receiver<TcpStream>,
+    client_list : HashMap<u32, ConsumerClient>,
+    topic_list : TopicList,
+    next_client_id : u32,
 }
 impl ConsumerServer {
     pub fn new (rx :  mpsc::Receiver<TcpStream>) -> ConsumerServer {
-        ConsumerServer { rx }
+
+        let client_list : HashMap<u32, ConsumerClient> = HashMap::new();
+        let topic_list = TopicList::new(false);
+
+        ConsumerServer {
+            rx,
+            client_list,
+            topic_list,
+            next_client_id : 0,
+        }
     }
 
-    pub fn run (&self) { 
-        let mut client_list : Vec<ClientBuff> = Vec::new();
-        let mut topic_list : HashMap<String, Topic> = HashMap::new();
-        topic_list.insert(String::from("test"), Topic::new(String::from("test")));
-        let mut next_producerid : u32 = 0;
+    pub fn run (&mut self) { 
+        //let mut client_list : Vec<ClientBuffx> = Vec::new();
 
         loop {
             // add new client if sent
             let message = self.rx.try_recv();
 
-            next_producerid += 1;
+            self.next_client_id += 1;
 
             match message {
                 Err(mpsc::TryRecvError::Empty) => {
@@ -126,8 +141,8 @@ impl ConsumerServer {
 
                 Ok(instream) => {
                     println!("creating new client");
-                    let c = ClientBuff::new(instream, next_producerid);
-                    client_list.push(c);
+                    let c = ConsumerClient::new(self.next_client_id, instream);
+                    self.client_list.insert(self.next_client_id, c);
                 },
                 
                 Err(_e) => {
@@ -136,24 +151,50 @@ impl ConsumerServer {
             }
 
             // process existing clients - go backwards as list will change length
-            for i in (0..client_list.len()).rev() {
-                let c = &mut client_list[i];
+            for (_, client) in &mut self.client_list {
+                client.process(&mut self.topic_list);
+            }
 
-                match c.state {
-                    BufferState::Pending => {
-                        c.process_auth();
+            self.client_list.retain(| _, c | match c.state() {
+                BufferState::Closed => false, _ => true 
+            });
+
+
+            // process topic updates
+            let mut event_buffer = [0; 1024];
+            let mut buffer = [0; 1024];
+            let events = self.topic_list.notify.read_events(&mut event_buffer)
+                .expect("Error while reading events");
+            let index_str = OsStr::new("index");
+            let data_str = OsStr::new("data");
+
+            for e in events {
+                match self.topic_list.watchers.get(&e.wd) {
+                    Some(topic_id) => {
+                        match e.name {
+                            Some(i) if i == index_str => {
+                                let tid = *topic_id;
+                                self.topic_list.read_index(tid, &mut buffer);
+                                if let Some(client_ids) = self.topic_list.followers.get_mut(&tid) {
+                                    for client_id in client_ids {
+                                        if let Some(client) = self.client_list.get_mut(client_id) {
+                                            client.send_index(&buffer);
+                                        }
+                                    }
+                                }
+                            },
+                            Some(d) if d == data_str => {
+
+                            }, 
+                            Some(_) => {/* error neither data nor index file */}
+                            None => { /* error "event should have a file name" */},
+                        }
                     },
-
-                    BufferState::Active => {
-                        c.process_data(&mut topic_list);
-                    },
-
-                    BufferState::Closed => {
-                        client_list.remove(i);
-                    },
-
+                    None => assert!(false, "topic id missing from watcher list"),
                 }
             }
+
+
             thread::sleep(Duration::from_millis(100))
         }
     }

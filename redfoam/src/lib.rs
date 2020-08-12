@@ -1,6 +1,7 @@
 
 pub mod client;
 pub mod producer;
+pub mod consumer;
 pub mod tcp;
 pub mod topic;
 pub mod buff;
