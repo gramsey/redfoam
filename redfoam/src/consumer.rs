@@ -1,5 +1,5 @@
 use std::net::{TcpStream};
-//use std::io::Write;
+use std::io::Write;
 use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::sync::mpsc;
@@ -91,12 +91,21 @@ impl ConsumerClient {
         }
     }
 
-    pub fn send_index(&self, _buffer : &[u8]) {
+    pub fn send_feed(&mut self, offset : u64, buffer : &[u8], feed_type : RecordType) -> Result<(),Er> {
 
-    }
+        self.tcp.write(&buffer.len().to_le_bytes())
+            .map_err(|e| Er::ClientTcpWrite(e))?;
 
-    pub fn send_data(&self, _buffer : &[u8]) {
+        self.tcp.write(&offset.to_le_bytes())
+            .map_err(|e| Er::ClientTcpWrite(e))?;
 
+        self.tcp.write(&[feed_type as u8])
+            .map_err(|e| Er::ClientTcpWrite(e))?;
+
+        self.tcp.write(buffer)
+            .map_err(|e| Er::ClientTcpWrite(e))?;
+
+        Ok(())
     }
 
     pub fn state(&self) -> &BufferState {
@@ -174,14 +183,20 @@ impl ConsumerServer {
                         match e.name {
                             Some(i) if i == index_str => {
                                 let tid = *topic_id;
-                                self.topic_list.read_index(tid, &mut buffer);
-                                if let Some(client_ids) = self.topic_list.followers.get_mut(&tid) {
-                                    for client_id in client_ids {
-                                        if let Some(client) = self.client_list.get_mut(client_id) {
-                                            client.send_index(&buffer);
+                                match self.topic_list.read_index(tid, &mut buffer)
+                                {
+                                    Ok((offset, size)) => {
+                                        if let Some(client_ids) = self.topic_list.followers.get_mut(&tid) {
+                                            for client_id in client_ids {
+                                                if let Some(client) = self.client_list.get_mut(client_id) {
+                                                    client.send_feed(offset, &buffer[..size], RecordType::IndexFeed);
+                                                }
+                                            }
                                         }
-                                    }
+                                    },
+                                    Err(_) => {/*todo*/},
                                 }
+                                    
                             },
                             Some(d) if d == data_str => {
 

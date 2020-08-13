@@ -7,6 +7,7 @@ pub enum Er {
     BadAuth,
     NotReady,
     ClientTcpRead(io::Error),
+    ClientTcpWrite(io::Error),
     IsClosed,
     InvalidSequence,
     CantReadFile(io::Error),
@@ -25,6 +26,10 @@ impl Display for Er {
             Er::NotReady => "Still reading input - not enough data to proceed",
             Er::ClientTcpRead(e) => {
                 s = format!("Failed to read tcp data for this client, io error :{}", e);
+                s.as_str()
+            }
+            Er::ClientTcpWrite(e) => {
+                s = format!("Failed to write tcp data for this client, io error :{}", e);
                 s.as_str()
             }
             Er::IsClosed => "Tried to process client that is already closed",

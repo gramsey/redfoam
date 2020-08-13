@@ -81,10 +81,11 @@ impl Topic {
         }
     }
 
-    pub fn read_index_latest(&mut self, buf : &mut [u8]) -> Result<usize,Er> {
+    pub fn read_index_latest(&mut self, buf : &mut [u8]) -> Result<(u64, usize),Er> {
         let size = self.read_index_into(buf, self.last_index_offset)?; 
+        let result = (self.last_index_offset, size);
         self.last_index_offset += size as u64;
-        Ok(size)
+        Ok(result)
     }
 
     fn read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
@@ -185,9 +186,9 @@ impl TopicList {
         written
     }
 
-    pub fn read_index(&mut self, topic_id : u16, data : &mut [u8]) -> Result<usize,Er> {
-        let n = self.topics.get_mut(&topic_id).unwrap().read_index_latest(data)?;
-        Ok(n)
+    pub fn read_index(&mut self, topic_id : u16, data : &mut [u8]) -> Result<(u64, usize),Er> {
+        let result = self.topics.get_mut(&topic_id).unwrap().read_index_latest(data)?;
+        Ok(result)
     }
 
     pub fn end_record(&mut self, topic_id : u16) -> u64 {

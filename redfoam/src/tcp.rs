@@ -14,13 +14,13 @@ pub enum BufferState {
 }
 
 pub enum RecordType {
-    Auth,
-    Producer,
-    ConsumerFollowTopics,
-    Undefined,
-    DataFeed,
-    IndexFeed,
-    ConsumerStart,
+    Auth = 1,
+    Producer = 2,
+    ConsumerFollowTopics = 3,
+    DataFeed = 4,
+    IndexFeed = 5,
+    ConsumerStart = 6,
+    Undefined = 255,
 }
 
 impl From<u8> for RecordType {
