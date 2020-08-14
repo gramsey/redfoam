@@ -13,6 +13,7 @@ pub enum BufferState {
     Closed,
 }
 
+#[derive(Copy, Clone)]
 pub enum RecordType {
     Auth = 1,
     Producer = 2,

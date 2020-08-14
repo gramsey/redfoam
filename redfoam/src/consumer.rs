@@ -201,14 +201,18 @@ impl ConsumerServer {
 
         let mut buffer = [0; 1024];
 
-        if file_name == "index" {
-            let (offset, size) = self.topic_list.read_index(topic_id, &mut buffer)?;
+        let feed_type = match file_name {
+            "index" => RecordType::IndexFeed, 
+            "data" => RecordType::DataFeed,
+            _ => RecordType::Undefined,
+        };
 
-            if let Some(client_ids) = self.topic_list.followers.get_mut(&topic_id) {
-                for client_id in client_ids {
-                    if let Some(client) = self.client_list.get_mut(client_id) {
-                        client.send_feed(offset, &buffer[..size], RecordType::IndexFeed);
-                    }
+        let (offset, size) = self.topic_list.read_index(topic_id, &mut buffer)?;
+
+        if let Some(client_ids) = self.topic_list.followers.get_mut(&topic_id) {
+            for client_id in client_ids {
+                if let Some(client) = self.client_list.get_mut(client_id) {
+                    client.send_feed(offset, &buffer[..size], feed_type);
                 }
             }
         }
