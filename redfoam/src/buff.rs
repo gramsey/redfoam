@@ -195,8 +195,6 @@ mod tests {
 
     #[test]
     fn test_readbuff() {
-        let s = String::from("hello world");
-        /* 0e= hex length of 'Eat My Shorts!' (14) */ 
         let mut bstr : &[u8] = b"\x0e\x00\x00\x00Eat My Shorts!"; 
         let mut b = Buff::new();
 
@@ -211,7 +209,7 @@ mod tests {
 
         b.rec_size=result1;
 
-        let mut message : &[u8] = b"Eat My Shorts!"; 
+        let message : &[u8] = b"Eat My Shorts!"; 
 
         assert_eq!(b.data(), message, "should be full message 'Eat My Shorts!' without size bytes"); 
         assert_eq!(b.is_end_of_record(), true, "should know it is at end of record");
@@ -222,8 +220,6 @@ mod tests {
 
     #[test]
     fn test_fullbuff() {
-        let s = String::from("hello world");
-        /* 0e= hex length of 'Eat My Shorts!' (14) */ 
         let mut bstr : &[u8] = b"\x7c\x06\x00\x00012345678901234567890123456789012345678901234567890123456789\
         0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
         0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
@@ -270,8 +266,6 @@ mod tests {
 
     #[test]
     fn test_multirec() {
-        let s = String::from("hello world");
-        /* 0e= hex length of 'Eat My Shorts!' (14) */ 
         let mut bstr : &[u8] = b"\x0e\x00\x00\x00Eat My Shorts!\x24\x00\x00\x00I have bumble bees in my back garden"; 
         let mut b = Buff::new();
 
@@ -286,7 +280,7 @@ mod tests {
 
         b.rec_size=result1;
 
-        let mut message : &[u8] = b"Eat My Shorts!"; 
+        let message : &[u8] = b"Eat My Shorts!"; 
 
         assert_eq!(b.data(), message, "should be full message 'Eat My Shorts!' without size bytes"); 
         b.reset();
@@ -298,7 +292,7 @@ mod tests {
 
         b.rec_size=result2;
 
-        let mut message2 : &[u8] = b"I have bumble bees in my back garden"; 
+        let message2 : &[u8] = b"I have bumble bees in my back garden"; 
         assert_eq!(b.data(), message2, "should be full message 'I have bumble bees in my back garden' without size bytes"); 
         b.reset();
 

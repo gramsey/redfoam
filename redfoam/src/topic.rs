@@ -82,13 +82,21 @@ impl Topic {
     }
 
     pub fn read_index_latest(&mut self, buf : &mut [u8]) -> Result<(u64, usize),Er> {
-        let size = self.read_index_into(buf, self.last_index_offset)?; 
+        let mut size = self.read_index_into(buf, self.last_index_offset)?; 
+        size = size - (size % 8); /* should be a NOP - but dont want to worry about partial read */
         let result = (self.last_index_offset, size);
         self.last_index_offset += size as u64;
         Ok(result)
     }
 
-    fn read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
+    pub fn read_data_latest(&mut self, buf : &mut [u8]) -> Result<(u64, usize),Er> {
+        let size = self.read_index_into(buf, self.last_data_offset)?; 
+        let result = (self.last_data_offset, size);
+        self.last_index_offset += size as u64;
+        Ok(result)
+    }
+
+    fn _read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
         let mut buf : [u8; 16] = [0;16];
         let position : u64;
         let idx_size : u64;
@@ -191,6 +199,10 @@ impl TopicList {
         Ok(result)
     }
 
+    pub fn read_data(&mut self, topic_id : u16, data : &mut [u8]) -> Result<(u64, usize),Er> {
+        let result = self.topics.get_mut(&topic_id).unwrap().read_data_latest(data)?;
+        Ok(result)
+    }
     pub fn end_record(&mut self, topic_id : u16) -> u64 {
         self.topics.get_mut(&topic_id).unwrap().end_rec()
     }
@@ -235,7 +247,7 @@ mod tests {
     #[test]
     fn test_readindex() {
         let mut t = Topic::new(&String::from("test"), false);
-        match t.read_index(1) {
+        match t._read_index(1) {
             Ok((position, size)) => {
                 assert_eq!(position, 5);
                 assert_eq!(size, 12);
@@ -243,7 +255,7 @@ mod tests {
             Err(e) => assert!(false, "error on read index {}", e),
         }
 
-        match t.read_index(0) {
+        match t._read_index(0) {
             Ok((position, size)) => {
                 assert_eq!(position, 0);
                 assert_eq!(size, 5);
@@ -297,21 +309,6 @@ mod tests {
 
 
 
-/*
-    #[test]
-    fn test_update_event() {
-        let mut t_producer = Topic::new(&String::from("test"), true);
-        let mut t_consumer = Topic::new(&String::from("test"), false);
-        let written : usize = t_producer.write(&b"My Update Event"[..]);
-
-
-        t.end_rec();
-
-        
-
-        
-    }
-    */
 
 }
 

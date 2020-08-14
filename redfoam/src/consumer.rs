@@ -1,6 +1,5 @@
 use std::net::{TcpStream};
 use std::io::Write;
-use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
@@ -13,7 +12,7 @@ use super::auth::Auth;
 use super::er::Er;
 
 pub struct ConsumerClient {
-    id : u32,
+    _id : u32,
     state : BufferState,
     buff : Buff,
     tcp : TcpStream,
@@ -25,7 +24,7 @@ impl ConsumerClient {
         let buff = Buff::new();
 
         ConsumerClient {
-            id : id,
+            _id : id,
             state : BufferState::Pending, 
             buff : buff,
             tcp : stream,
@@ -171,37 +170,21 @@ impl ConsumerServer {
 
             // process topic updates
             let mut event_buffer = [0; 1024];
-            let mut buffer = [0; 1024];
             let events = self.topic_list.notify.read_events(&mut event_buffer)
                 .expect("Error while reading events");
-            let index_str = OsStr::new("index");
-            let data_str = OsStr::new("data");
 
             for e in events {
                 match self.topic_list.watchers.get(&e.wd) {
                     Some(topic_id) => {
                         match e.name {
-                            Some(i) if i == index_str => {
-                                let tid = *topic_id;
-                                match self.topic_list.read_index(tid, &mut buffer)
-                                {
-                                    Ok((offset, size)) => {
-                                        if let Some(client_ids) = self.topic_list.followers.get_mut(&tid) {
-                                            for client_id in client_ids {
-                                                if let Some(client) = self.client_list.get_mut(client_id) {
-                                                    client.send_feed(offset, &buffer[..size], RecordType::IndexFeed);
-                                                }
-                                            }
-                                        }
-                                    },
-                                    Err(_) => {/*todo*/},
+                            Some(event_name) => {
+                                if let Some(file_name) = event_name.to_str() {
+                                    let t_id = *topic_id;
+                                    self.send_to_client(t_id, file_name);  
+                                } else {
+                                    /*event name (file name) is not valid unicode*/
                                 }
-                                    
-                            },
-                            Some(d) if d == data_str => {
-
                             }, 
-                            Some(_) => {/* error neither data nor index file */}
                             None => { /* error "event should have a file name" */},
                         }
                     },
@@ -213,5 +196,24 @@ impl ConsumerServer {
             thread::sleep(Duration::from_millis(100))
         }
     }
+
+    fn send_to_client(&mut self, topic_id : u16, file_name : &str) -> Result<(), Er> {
+
+        let mut buffer = [0; 1024];
+
+        if file_name == "index" {
+            let (offset, size) = self.topic_list.read_index(topic_id, &mut buffer)?;
+
+            if let Some(client_ids) = self.topic_list.followers.get_mut(&topic_id) {
+                for client_id in client_ids {
+                    if let Some(client) = self.client_list.get_mut(client_id) {
+                        client.send_feed(offset, &buffer[..size], RecordType::IndexFeed);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
 }
 
