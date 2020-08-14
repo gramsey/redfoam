@@ -182,10 +182,13 @@ impl TopicList {
         Ok(Some(x))
     }
     */
-    pub fn follow_topics(&self, _filter : &[u8]) -> Result<Option<Vec<u16>>,Er> {
-        let mut x : Vec<u16> = Vec::new();
-        x.push(1);
-        Ok(Some(x))
+    pub fn follow_topic(&mut self, topic_id : u16, client_id: u32) -> Result<(),Er> {
+
+        if let Some(clients) = self.topics.get_mut(&topic_id) {
+            clients.push(client_id);
+        } 
+
+        Ok(())
     }
 
 

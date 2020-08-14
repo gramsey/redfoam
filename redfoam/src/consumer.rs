@@ -12,24 +12,26 @@ use super::auth::Auth;
 use super::er::Er;
 
 pub struct ConsumerClient {
-    _id : u32,
+    id : u32,
     state : BufferState,
     buff : Buff,
     tcp : TcpStream,
     auth : Option<Auth>,
     rec_type : Option<RecordType>,
+    topic_id : Option<u32>,
 }
 impl ConsumerClient {
     pub fn new (id : u32, stream : TcpStream) -> ConsumerClient {
         let buff = Buff::new();
 
         ConsumerClient {
-            _id : id,
+            id : id,
             state : BufferState::Pending, 
             buff : buff,
             tcp : stream,
             auth : None,
             rec_type : None, 
+            topic_id : None,
         }
     }
 
@@ -78,7 +80,8 @@ impl ConsumerClient {
                 if self.auth.is_some() {
                     if self.buff.has_data() {
                         if self.buff.is_end_of_record() {
-                            topic_list.follow_topics(self.buff.data())?;
+                            self.topic_id = self.buff.read_u32();
+                            topic_list.follow_topic(self.topic_id, self.id)?;
                         }
                         self.buff.reset();
                         self.rec_type = None;
