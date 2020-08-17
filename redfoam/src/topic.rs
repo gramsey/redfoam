@@ -127,20 +127,20 @@ impl Topic {
 }
 
 pub struct TopicList {
-    topic_names : HashMap<String, u16>,
-    topics : HashMap<u16, Topic>,
-    pub followers : HashMap<u16, Vec<u32>>,
-    pub watchers : HashMap<WatchDescriptor, u16>,
+    topic_names : HashMap<String, u32>,
+    topics : HashMap<u32, Topic>,
+    pub followers : HashMap<u32, Vec<u32>>,
+    pub watchers : HashMap<WatchDescriptor, u32>,
     pub notify : Inotify,
 }
 impl TopicList {
 
     pub fn new (is_producer : bool) -> TopicList {
 
-        let topic_names : HashMap<String, u16> = HashMap::new();
-        let topics : HashMap<u16, Topic> = HashMap::new();
-        let watchers : HashMap<WatchDescriptor, u16> = HashMap::new();
-        let followers : HashMap<u16, Vec<u32>> = HashMap::new();
+        let topic_names : HashMap<String, u32> = HashMap::new();
+        let topics : HashMap<u32, Topic> = HashMap::new();
+        let watchers : HashMap<WatchDescriptor, u32> = HashMap::new();
+        let followers : HashMap<u32, Vec<u32>> = HashMap::new();
         let notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
 
         let mut t = TopicList {
@@ -155,7 +155,7 @@ impl TopicList {
         t
     }
 
-    fn add_topic(&mut self, topic_id : u16, topic_name : String, is_producer : bool) -> Result<(),Er>{
+    fn add_topic(&mut self, topic_id : u32, topic_name : String, is_producer : bool) -> Result<(),Er>{
 
         let t = Topic::new(&topic_name, is_producer);
 
@@ -172,7 +172,7 @@ impl TopicList {
         Ok(())
     }
 
-    pub fn get_topic(&self, name : &String) -> u16 {
+    pub fn get_topic(&self, name : &String) -> u32 {
         *self.topic_names.get(name).unwrap()
     }
 /*
@@ -182,31 +182,30 @@ impl TopicList {
         Ok(Some(x))
     }
     */
-    pub fn follow_topic(&mut self, topic_id : u16, client_id: u32) -> Result<(),Er> {
-
-        if let Some(clients) = self.topics.get_mut(&topic_id) {
-            clients.push(client_id);
-        } 
-
+    pub fn follow_topic(&mut self, topic_id : u32, client_id: u32) -> Result<(),Er> {
+        match self.followers.get_mut(&topic_id) {
+            Some(clients) => clients.push(client_id),
+            None => {/* fail? */},
+        }
         Ok(())
     }
 
 
-    pub fn write(&mut self, topic_id : u16, data : &[u8]) -> usize {
+    pub fn write(&mut self, topic_id : u32, data : &[u8]) -> usize {
         let written = self.topics.get_mut(&topic_id).unwrap().write(data);
         written
     }
 
-    pub fn read_index(&mut self, topic_id : u16, data : &mut [u8]) -> Result<(u64, usize),Er> {
+    pub fn read_index(&mut self, topic_id : u32, data : &mut [u8]) -> Result<(u64, usize),Er> {
         let result = self.topics.get_mut(&topic_id).unwrap().read_index_latest(data)?;
         Ok(result)
     }
 
-    pub fn read_data(&mut self, topic_id : u16, data : &mut [u8]) -> Result<(u64, usize),Er> {
+    pub fn read_data(&mut self, topic_id : u32, data : &mut [u8]) -> Result<(u64, usize),Er> {
         let result = self.topics.get_mut(&topic_id).unwrap().read_data_latest(data)?;
         Ok(result)
     }
-    pub fn end_record(&mut self, topic_id : u16) -> u64 {
+    pub fn end_record(&mut self, topic_id : u32) -> u64 {
         self.topics.get_mut(&topic_id).unwrap().end_rec()
     }
 }
@@ -283,7 +282,7 @@ mod tests {
         match events.next() {
             Some(e) => {
                 match tl_consumer.watchers.get(&e.wd) {
-                    Some(topic_id) => assert_eq!(*topic_id, 1u16),
+                    Some(topic_id) => assert_eq!(*topic_id, 1u32),
                     None => assert!(false, "topic id missing from watcher list"),
                 }
                 match e.name {
@@ -298,7 +297,7 @@ mod tests {
         match events.next() {
             Some(e) => {
                 match tl_consumer.watchers.get(&e.wd) {
-                    Some(topic_id) => assert_eq!(*topic_id, 1u16),
+                    Some(topic_id) => assert_eq!(*topic_id, 1u32),
                     None => assert!(false, "topic id missing from watcher list"),
                 }
                 match e.name {

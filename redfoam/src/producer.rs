@@ -12,7 +12,7 @@ pub struct ProducerClient {
     tcp : TcpStream,
     auth : Option<Auth>,
     rec_type : Option<RecordType>,
-    topic_id : Option<u16>,
+    topic_id : Option<u32>,
 }
 impl ProducerClient {
     pub fn new (stream : TcpStream) -> ProducerClient {
@@ -48,7 +48,7 @@ impl ProducerClient {
 
             Some(RecordType::Producer) => {
                 if self.auth.is_some() {
-                    if self.topic_id.is_none() { self.topic_id = self.buff.read_u16(); }
+                    if self.topic_id.is_none() { self.topic_id = self.buff.read_u32(); }
 
                     if self.buff.has_data() {
                         if let Some(topic_id) = self.topic_id {

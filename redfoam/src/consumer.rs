@@ -80,11 +80,18 @@ impl ConsumerClient {
                 if self.auth.is_some() {
                     if self.buff.has_data() {
                         if self.buff.is_end_of_record() {
-                            self.topic_id = self.buff.read_u32();
-                            topic_list.follow_topic(self.topic_id, self.id)?;
+
+                            match self.buff.read_u32() {
+                                Some(topic_id) => {
+                                    self.topic_id = Some(topic_id);
+                                    topic_list.follow_topic(topic_id, self.id)?;
+                                }, 
+                                None => { /* record MUST have topic id */ },
+                            }
+
+                            self.rec_type = None;
+                            self.buff.reset();
                         }
-                        self.buff.reset();
-                        self.rec_type = None;
                     }
                 }
                 Ok(())
@@ -200,7 +207,7 @@ impl ConsumerServer {
         }
     }
 
-    fn send_to_client(&mut self, topic_id : u16, file_name : &str) -> Result<(), Er> {
+    fn send_to_client(&mut self, topic_id : u32, file_name : &str) -> Result<(), Er> {
 
         let mut buffer = [0; 1024];
 
