@@ -5,6 +5,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use super::{trace};
+
 use super::topic::{TopicList};
 use super::buff::{Buff};
 use super::tcp::{BufferState, RecordType};
@@ -78,20 +80,14 @@ impl ConsumerClient {
 
             Some(RecordType::ConsumerFollowTopics) => {
                 if self.auth.is_some() {
-                    if self.buff.has_data() {
-                        if self.buff.is_end_of_record() {
-
-                            match self.buff.read_u32() {
-                                Some(topic_id) => {
-                                    self.topic_id = Some(topic_id);
-                                    topic_list.follow_topic(topic_id, self.id)?;
-                                }, 
-                                None => { /* record MUST have topic id */ },
-                            }
-
+                    match self.buff.read_u32() {
+                        Some(topic_id) => {
+                            self.topic_id = Some(topic_id);
+                            topic_list.follow_topic(topic_id, self.id)?;
                             self.rec_type = None;
                             self.buff.reset();
-                        }
+                        }, 
+                        None => { /* record MUST have topic id */ },
                     }
                 }
                 Ok(())
@@ -102,10 +98,9 @@ impl ConsumerClient {
 
     pub fn send_feed(&mut self, offset : u64, buffer : &[u8], feed_type : RecordType) -> Result<(),Er> {
 
-        self.tcp.write(&buffer.len().to_le_bytes())
-            .map_err(|e| Er::ClientTcpWrite(e))?;
+        let length : u32 = buffer.len() as u32;
 
-        self.tcp.write(&offset.to_le_bytes())
+        self.tcp.write(&length.to_le_bytes())
             .map_err(|e| Er::ClientTcpWrite(e))?;
 
         self.tcp.write(&[feed_type as u8])
@@ -158,13 +153,12 @@ impl ConsumerServer {
                 },
 
                 Ok(instream) => {
-                    println!("creating new client");
                     let c = ConsumerClient::new(self.next_client_id, instream);
                     self.client_list.insert(self.next_client_id, c);
                 },
                 
                 Err(_e) => {
-                    println!("  OOOPSS");  //todo: proper error handling
+                    unimplemented!();
                 }
             }
 
@@ -192,7 +186,7 @@ impl ConsumerServer {
                                     let t_id = *topic_id;
                                     self.send_to_client(t_id, file_name);  
                                 } else {
-                                    /*event name (file name) is not valid unicode*/
+                                    unimplemented!();
                                 }
                             }, 
                             None => { /* error "event should have a file name" */},
@@ -208,16 +202,19 @@ impl ConsumerServer {
     }
 
     fn send_to_client(&mut self, topic_id : u32, file_name : &str) -> Result<(), Er> {
-
-        let mut buffer = [0; 1024];
+        let mut buffer = [0; 1010];
 
         let feed_type = match file_name {
             "index" => RecordType::IndexFeed, 
-            "data" => RecordType::DataFeed,
-            _ => RecordType::Undefined,
+            "data"  => RecordType::DataFeed,
+            _       => RecordType::Undefined,
         };
 
-        let (offset, size) = self.topic_list.read_index(topic_id, &mut buffer)?;
+        let (offset, size) = match feed_type {
+            RecordType::IndexFeed => self.topic_list.read_index(topic_id, &mut buffer)?,
+            RecordType::DataFeed => self.topic_list.read_data(topic_id, &mut buffer)?,
+            _ => (0, 0),
+        };
 
         if let Some(client_ids) = self.topic_list.followers.get_mut(&topic_id) {
             for client_id in client_ids {

@@ -1,8 +1,11 @@
 use std::io::{Read, ErrorKind};
 use std::convert::TryInto;
 use std::mem;
+use std::fmt;
 
 use super::er::Er;
+
+use super::trace;
 
 pub const BUFF_SIZE : usize = 1024;
 
@@ -78,7 +81,6 @@ impl Buff {
         if !self.seq_checked {
 
             if let Some(s) = self.read_u8() {
-                println!("seq incoming {}, expencting {}", s, self.seq);
                 if s == self.seq { 
                     self.seq_checked = true;
                     Ok(())
@@ -111,6 +113,8 @@ impl Buff {
     }
 
     pub fn data(&self) -> &[u8] {
+        trace!("returning data at {}  to {} size : {}", self.rec_pos, self.read_to(), self.rec_size.unwrap());
+        trace!(".. from content {:?}", self);
         &self.buffer[self.rec_pos as usize .. self.read_to()]
     }
 
@@ -131,7 +135,7 @@ impl Buff {
     }
 
     pub fn reset(&mut self) {
-        println!("reset");
+        trace!("reset {:?}", self);
         // update for next read
         let size = self.read_to() as u32 - self.rec_pos;
         self.rec_pos += size;
@@ -147,12 +151,21 @@ impl Buff {
 
         // if record is completely written reset
         if self.is_end_of_record() {
-            println!("is end of record");
             self.rec_upto = 0;
             self.rec_size = None;
             self.seq = self.seq.wrapping_add(1); //overflows at 255 + 1 back to zero
             self.seq_checked = false;
         }
+    }
+}
+impl fmt::Debug for Buff {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Buff")
+            .field("rec_pos", &self.rec_pos)
+            .field("buff_pos", &self.buff_pos)
+            .field("rec_upto", &self.rec_upto)
+            .field("content", &String::from_utf8_lossy(&self.buffer[..self.buff_pos as usize]))
+            .finish()
     }
 }
 

@@ -26,18 +26,20 @@ impl Topic {
 
         if is_producer { f_options.append(true); } else { f_options.read(true); }
 
-        let f_data = f_options.open(&data_fname).expect("cant open topic data file");
+        let mut f_data = f_options.open(&data_fname).expect("cant open topic data file");
         let mut f_index = f_options.open(&index_fname).expect("cant open topic data file");
 
-        let idx = f_index.seek(SeekFrom::End(0)).unwrap() / 8;
+        let last_index = f_index.seek(SeekFrom::End(0)).unwrap(); 
+        let last_data = f_data.seek(SeekFrom::End(0)).unwrap(); 
+        let idx = last_index / 8;
 
         Topic {
             index : idx,
             data_file : f_data,
             index_file : f_index,
             current_producer : None,
-            last_data_offset : 0,
-            last_index_offset : 0,
+            last_data_offset : last_data,
+            last_index_offset : last_index,
         }
     }
 
@@ -71,12 +73,16 @@ impl Topic {
     }
 
     pub fn read_data_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
+        println!("reading data file start : {}", start);
 
         self.data_file.seek(SeekFrom::Start(start))
             .map_err(|e| Er::CantReadFile(e))?;
 
         match self.data_file.read(buf) {
-            Ok(size) => { Ok(size) },
+            Ok(size) => { 
+                println!("read {}", size);
+                Ok(size) 
+            },
             Err(e) => { Err(Er::CantReadFile(e)) },
         }
     }
@@ -90,7 +96,8 @@ impl Topic {
     }
 
     pub fn read_data_latest(&mut self, buf : &mut [u8]) -> Result<(u64, usize),Er> {
-        let size = self.read_index_into(buf, self.last_data_offset)?; 
+        println!("read data latest");
+        let size = self.read_data_into(buf, self.last_data_offset)?; 
         let result = (self.last_data_offset, size);
         self.last_index_offset += size as u64;
         Ok(result)
@@ -183,9 +190,15 @@ impl TopicList {
     }
     */
     pub fn follow_topic(&mut self, topic_id : u32, client_id: u32) -> Result<(),Er> {
+        println!("following {}", topic_id);
         match self.followers.get_mut(&topic_id) {
             Some(clients) => clients.push(client_id),
-            None => {/* fail? */},
+            None => {
+                let mut client_list : Vec<u32> = Vec::new();
+                client_list.push(client_id);
+                println!("created client list for topic {}", topic_id);
+                self.followers.insert(topic_id, client_list);
+            },
         }
         Ok(())
     }

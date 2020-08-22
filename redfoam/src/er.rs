@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::io;
 use std::sync::mpsc;
 
+#[derive(Debug)]
 pub enum Er {
     BadAuth,
     NotReady,
