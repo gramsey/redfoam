@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 
 use super::er::Er;
+use super::trace;
 
 
 pub struct Topic {
@@ -32,6 +33,8 @@ impl Topic {
         let last_index = f_index.seek(SeekFrom::End(0)).unwrap(); 
         let last_data = f_data.seek(SeekFrom::End(0)).unwrap(); 
         let idx = last_index / 8;
+
+        trace!("creating topic name : {}  idx : {}, data file : {}, index file : {} last index offset : {} last data offset : {}",topic_name, idx, data_fname, index_fname, last_index, last_data);   
 
         Topic {
             index : idx,
@@ -67,20 +70,22 @@ impl Topic {
             .map_err(|e| Er::CantReadFile(e))?;
 
         match self.index_file.read(buf) {
-            Ok(size) => { Ok(size) },
+            Ok(size) => { 
+                trace!("read_index_into() : start : {}, size {}", start, size); 
+                Ok(size)
+            },
             Err(e) => { Err(Er::CantReadFile(e)) },
         }
     }
 
     pub fn read_data_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
-        println!("reading data file start : {}", start);
 
         self.data_file.seek(SeekFrom::Start(start))
             .map_err(|e| Er::CantReadFile(e))?;
 
         match self.data_file.read(buf) {
             Ok(size) => { 
-                println!("read {}", size);
+                trace!("read_data_into() : start : {}, size {}", start, size); 
                 Ok(size) 
             },
             Err(e) => { Err(Er::CantReadFile(e)) },
@@ -99,7 +104,7 @@ impl Topic {
         println!("read data latest");
         let size = self.read_data_into(buf, self.last_data_offset)?; 
         let result = (self.last_data_offset, size);
-        self.last_index_offset += size as u64;
+        self.last_data_offset += size as u64;
         Ok(result)
     }
 

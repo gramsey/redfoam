@@ -113,8 +113,8 @@ impl Buff {
     }
 
     pub fn data(&self) -> &[u8] {
-        trace!("returning data at {}  to {} size : {}", self.rec_pos, self.read_to(), self.rec_size.unwrap());
-        trace!(".. from content {:?}", self);
+        trace!("[data()] {:?}", self);
+        trace!("[read_to()] {}", self.read_to());
         &self.buffer[self.rec_pos as usize .. self.read_to()]
     }
 
@@ -135,7 +135,7 @@ impl Buff {
     }
 
     pub fn reset(&mut self) {
-        trace!("reset {:?}", self);
+        trace!("reset before{:?}", self);
         // update for next read
         let size = self.read_to() as u32 - self.rec_pos;
         self.rec_pos += size;
@@ -156,6 +156,7 @@ impl Buff {
             self.seq = self.seq.wrapping_add(1); //overflows at 255 + 1 back to zero
             self.seq_checked = false;
         }
+        trace!("reset after {:?}", self);
     }
 }
 impl fmt::Debug for Buff {
@@ -164,6 +165,8 @@ impl fmt::Debug for Buff {
             .field("rec_pos", &self.rec_pos)
             .field("buff_pos", &self.buff_pos)
             .field("rec_upto", &self.rec_upto)
+            .field("rec_size", &self.rec_size)
+            .field("seq", &self.seq)
             .field("content", &String::from_utf8_lossy(&self.buffer[..self.buff_pos as usize]))
             .finish()
     }

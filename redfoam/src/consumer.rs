@@ -97,8 +97,10 @@ impl ConsumerClient {
     }
 
     pub fn send_feed(&mut self, offset : u64, buffer : &[u8], feed_type : RecordType) -> Result<(),Er> {
+        trace!("send_feed(offset={}, feed_type={}", offset, feed_type as u8);
 
         let length : u32 = buffer.len() as u32;
+        trace!("   length {}", length);
 
         self.tcp.write(&length.to_le_bytes())
             .map_err(|e| Er::ClientTcpWrite(e))?;
