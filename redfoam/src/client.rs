@@ -1,7 +1,6 @@
 use std::io::{Write};
 use std::net::TcpStream;
 use std::collections::VecDeque;
-use std::str;
 use std::sync::mpsc;
 use std::thread;
 
@@ -158,17 +157,49 @@ pub fn get_reciever (_topics : String, url : String, auth : String) -> std::io::
 }
 */
 
+pub struct Listener {
+    client : Client,
+    messages : Messages,
+}
+
+impl Listener {
+    pub fn new (topic : String, url : String, auth : String) -> Result<Listener, Er> {
+        let mut client = Client::new(topic, url, auth).expect("cant create client");
+        let messages;
+        client.follow_topic(1);
+
+        match client.next()? {
+            Some(RecordType::ConsumerFollowTopics) => {
+                let index_offset = client.tcp_buff.read_u64().unwrap();
+                let data_offset = client.tcp_buff.read_u64().unwrap();
+                messages = Messages::new(index_offset, data_offset);
+            }, 
+            Some(_) => return Err(Er::FailedToReadDataStart),
+            None => return Err(Er::IsNone),
+        }
+        client.set_blocking(false);
+        Ok(Listener { client, messages })
+    }
+
+    pub fn next(&mut self) {
+        match self.client.next().expect("cant read next from client") {
+                Some(RecordType::DataFeed) => {},
+                Some(RecordType::IndexFeed) => {},
+                _ => {unimplemented!()}
+        }
+    }
+}
+
+
 pub struct Client {
     io : TcpStream,
     seq : u8,
-    tcp_buff : Buff,
+    pub tcp_buff : Buff,
 }
 impl Client {
     pub fn new (topic : String, url : String, auth : String) -> std::io::Result<Client> {
 
         let mut stream = TcpStream::connect(url)?;
-        stream.set_nonblocking(true).expect("set_nonblocking call failed");
-
         let message = format!("{};{}",topic, auth);
         
         let size = message.len() as u32;
@@ -226,6 +257,10 @@ impl Client {
         else {
             Ok(None)
         }
+    }
+
+    pub fn set_blocking (&mut self, is_blocking : bool) {
+        self.io.set_nonblocking(is_blocking).expect("set_nonblocking call failed");
     }
 
     pub fn data(&self) -> &[u8] { self.tcp_buff.data() }

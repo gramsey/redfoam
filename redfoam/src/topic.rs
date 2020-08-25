@@ -194,7 +194,7 @@ impl TopicList {
         Ok(Some(x))
     }
     */
-    pub fn follow_topic(&mut self, topic_id : u32, client_id: u32) -> Result<(),Er> {
+    pub fn follow_topic(&mut self, topic_id : u32, client_id: u32) -> Result<(u64, u64), Er> {
         println!("following {}", topic_id);
         match self.followers.get_mut(&topic_id) {
             Some(clients) => clients.push(client_id),
@@ -205,7 +205,11 @@ impl TopicList {
                 self.followers.insert(topic_id, client_list);
             },
         }
-        Ok(())
+        if let Some(topic) = self.topics.get_mut(&topic_id) {
+            Ok((topic.last_index_offset, topic.last_data_offset))
+        } else {
+            Err(Er::TopicNotFound)
+        }
     }
 
 

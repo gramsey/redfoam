@@ -83,9 +83,23 @@ impl ConsumerClient {
                     match self.buff.read_u32() {
                         Some(topic_id) => {
                             self.topic_id = Some(topic_id);
-                            topic_list.follow_topic(topic_id, self.id)?;
+                            let (index_pos, data_pos) = topic_list.follow_topic(topic_id, self.id)?;
                             self.rec_type = None;
                             self.buff.reset();
+                            //send response
+                            let size = 17u32; // u8 + u64 + u64
+
+                            self.tcp.write(&size.to_le_bytes())
+                                .map_err(|e| Er::ServerTcpWrite(e))?;
+
+                            self.tcp.write(&[RecordType::ConsumerFollowTopics as u8])
+                                .map_err(|e| Er::ServerTcpWrite(e))?;
+
+                            self.tcp.write(&index_pos.to_le_bytes())
+                                .map_err(|e| Er::ServerTcpWrite(e))?;
+
+                            self.tcp.write(&data_pos.to_le_bytes())
+                                .map_err(|e| Er::ServerTcpWrite(e))?;
                         }, 
                         None => { /* record MUST have topic id */ },
                     }
