@@ -1,11 +1,12 @@
 #[cfg(test)]
 mod tests {
-    use redfoam::client::Client;
+    use redfoam::client::{Client,Listener};
     use redfoam::tcp;
     use redfoam::er::Er;
     use redfoam::trace;
     use std::time::Duration;
     use std::thread;
+    use std::str;
 
     fn setup() {
 
@@ -22,20 +23,22 @@ mod tests {
 #[ignore]
 #[test]
     fn writesomething () {
-
         let mut c = Client::new(String::from("test"), String::from("127.0.0.1:9090"), String::from("ANON")).unwrap();
         c.send(String::from("hello world!")).expect("sending hello world failed");
         c.send(String::from("another message")).expect("sending another message failed");
         thread::sleep(Duration::new(1,0));
     }
 
+#[ignore]
 #[test]
     fn readsomething () -> Result<(), Er> {
         setup();
+        trace!("test : creating producer");
         let mut producer = Client::new(String::from("test"), String::from("127.0.0.1:9090"), String::from("ANON")).unwrap();
+        trace!("test : creating producer");
         let mut consumer = Client::new(String::from("test"), String::from("127.0.0.1:9091"), String::from("ANON")).unwrap();
 
-        println!("follow topic****");
+        println!("test : following  topic");
         consumer.follow_topic(1);
         producer.send(String::from("alphabet soup")).expect("sending alphabetsoup failed");
         thread::sleep(Duration::new(1,0));
@@ -74,6 +77,29 @@ mod tests {
                 assert!(false, "didn't get anything");
             }
         }
+        Ok(())
+    }
+
+#[test]
+    fn testlistener () -> Result<(), Er> {
+        setup();
+        let mut producer = Client::new(String::from("test"), String::from("127.0.0.1:9090"), String::from("ANON")).unwrap();
+        trace!("test : created producer");
+        let mut consumer = Listener::new(String::from("test"), String::from("127.0.0.1:9091"), String::from("ANON")).unwrap();
+        trace!("test : created listener");
+
+
+        producer.send(String::from("alphabet soup")).expect("sending alphabetsoup failed");
+        trace!("test : sent alphabet soup");
+        thread::sleep(Duration::new(1,0));
+
+        let x = consumer.next();
+        trace!("test : got next record");
+        assert!(x.is_some(), "consumer should return a record!");
+        let y = &x.unwrap();
+        let message = str::from_utf8(y).unwrap();
+        assert_eq!(message, "alphabet soup");
+
         Ok(())
     }
 }

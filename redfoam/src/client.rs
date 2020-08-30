@@ -7,6 +7,7 @@ use std::thread;
 use super::buff::Buff;
 use super::tcp::{RecordType};
 use super::er::Er;
+use super::trace;
 
 pub struct ReadClient {
     io : TcpStream,
@@ -63,14 +64,8 @@ impl ReadClient {
 
                 Some(RecordType::ConsumerStart) => {
                     if self.tcp_buff.is_end_of_record() {
-                        let data_start;
                         let index_start;
-
-                        if let Some(offset) = self.tcp_buff.read_u64() {
-                            data_start = offset;
-                        } else {
-                            return Err(Er::FailedToReadDataStart);
-                        }
+                        let data_start;
 
                         if let Some(offset) = self.tcp_buff.read_u64() {
                             index_start = offset;
@@ -78,7 +73,13 @@ impl ReadClient {
                             return Err(Er::FailedToReadDataStart);
                         }
 
-                        messages = Some(Messages::new(data_start, index_start));
+                        if let Some(offset) = self.tcp_buff.read_u64() {
+                            data_start = offset;
+                        } else {
+                            return Err(Er::FailedToReadDataStart);
+                        }
+
+                        messages = Some(Messages::new(index_start, data_start));
                         record_type = None;
                     }
 
@@ -116,7 +117,7 @@ pub fn follow_topic(topic_id : u32, url : String, auth : String) -> std::io::Res
     tcp.write(auth.as_bytes())?;
 
     seq = seq + 1;
-    size = 5u32;
+    size = 8u32; // size[4] + seq[1] + mess_type[1] + topic_id[2] 
     mess_type = RecordType::ConsumerFollowTopics as u8; // 1 = auth
 
     tcp.write(&size.to_le_bytes())?;
@@ -164,29 +165,56 @@ pub struct Listener {
 
 impl Listener {
     pub fn new (topic : String, url : String, auth : String) -> Result<Listener, Er> {
+        trace!("creating listener client");
         let mut client = Client::new(topic, url, auth).expect("cant create client");
         let messages;
+        client.set_blocking(false);
         client.follow_topic(1);
 
-        match client.next()? {
-            Some(RecordType::ConsumerFollowTopics) => {
-                let index_offset = client.tcp_buff.read_u64().unwrap();
-                let data_offset = client.tcp_buff.read_u64().unwrap();
-                messages = Messages::new(index_offset, data_offset);
-            }, 
-            Some(_) => return Err(Er::FailedToReadDataStart),
-            None => return Err(Er::IsNone),
+        client.set_blocking(true);
+
+
+        loop {
+            match client.next()? {
+                Some(RecordType::ConsumerFollowTopics) => {
+                    let index_offset = client.tcp_buff.read_u64().unwrap();
+                    let data_offset = client.tcp_buff.read_u64().unwrap();
+                    messages = Messages::new(index_offset, data_offset);
+                    trace!("message list created at index : {}, data : {} from buffer {:?}", index_offset, data_offset, client.tcp_buff);
+                    client.reset();
+                    break;
+                }, 
+                Some(_) => return Err(Er::FailedToReadDataStart),
+                None => (),
+            }
         }
         client.set_blocking(false);
         Ok(Listener { client, messages })
     }
 
-    pub fn next(&mut self) {
-        match self.client.next().expect("cant read next from client") {
-                Some(RecordType::DataFeed) => {},
-                Some(RecordType::IndexFeed) => {},
-                _ => {unimplemented!()}
+    pub fn next(&mut self) -> Option<Vec<u8>> {
+        loop {
+            match self.client.next().expect("cant read next from client") {
+                    Some(RecordType::DataFeed) => { 
+                        self.messages.push_data(self.client.data()); 
+                        trace!("pushed data {} bytes", self.client.data().len());
+                        self.client.reset();
+                    },
+                    Some(RecordType::IndexFeed) => { 
+                        let idx = self.client.tcp_buff.read_u64();
+                        self.messages.push_index(idx.unwrap()); 
+                        trace!("pushed index {:?}", idx);
+                        self.client.reset();
+                    },
+                    Some(record_type) =>  {
+                        trace!("client unexpectedly got record_type {}", record_type as u8);
+                        unimplemented!();
+                    },
+                    None => { break;}
+            }
         }
+
+        self.messages.next()
     }
 }
 
@@ -202,7 +230,7 @@ impl Client {
         let mut stream = TcpStream::connect(url)?;
         let message = format!("{};{}",topic, auth);
         
-        let size = message.len() as u32;
+        let size = 4 + 1 + 1 + message.len() as u32;
         let mess_type : u8 = 1; // 1 = auth
         let seq : u8 = 0;
 
@@ -216,7 +244,7 @@ impl Client {
 
     pub fn send(&mut self, content : String) -> std::io::Result<()> {
 
-        let len : u32 = content.len() as u32;
+        let len : u32 = 4 + 1 + 1 + 4 + content.len() as u32;
         let mess_type : u8 = 2; // 1 = producer
         let topic_id : u32 = 1;
 
@@ -233,7 +261,7 @@ impl Client {
 
     pub fn follow_topic(&mut self, topic_id : u32) -> std::io::Result<()> {
 
-        let len = 5u32;
+        let len : u32 = 4 + 1 + 1 + 4;
         let mess_type : u8 = 3; // 1 = producer
 
         self.io.write(&len.to_le_bytes())?;
@@ -247,12 +275,16 @@ impl Client {
     }
 
     pub fn next(&mut self) -> Result<Option<RecordType>, Er> {
-        self.tcp_buff.read_data(&mut self.io)?;
+        let size_read = self.tcp_buff.read_data(&mut self.io)?;
+        trace!("size_read {}", size_read);
         if self.tcp_buff.rec_size.is_none() { self.tcp_buff.rec_size = self.tcp_buff.read_u32(); }
+        trace!("client : buffer {:?}", self.tcp_buff);
 
         if self.tcp_buff.is_end_of_record() {
-            let record_type = self.tcp_buff.read_u8().map(|r| r.into());
-            Ok(record_type)
+            let record_type = self.tcp_buff.read_u8().unwrap();
+            trace!("rt {}, from buffer {:?} ", record_type, self.tcp_buff);
+            //let record_type = self.tcp_buff.read_u8().map(|r| r.into());
+            Ok(Some(RecordType::from(record_type)))
         }
         else {
             Ok(None)
@@ -260,7 +292,8 @@ impl Client {
     }
 
     pub fn set_blocking (&mut self, is_blocking : bool) {
-        self.io.set_nonblocking(is_blocking).expect("set_nonblocking call failed");
+        trace!("set_blocking {}", is_blocking);
+        self.io.set_nonblocking(!is_blocking).expect("set_nonblocking call failed");
     }
 
     pub fn data(&self) -> &[u8] { self.tcp_buff.data() }
@@ -274,31 +307,29 @@ pub struct Messages {
     index : VecDeque<u64>,
     data_offset : u64,
     index_offset : u64,
-    last_index : Option<u64>,
 }
 
 
+
 impl Messages {
-    fn new(data_offset : u64, index_offset : u64) -> Messages {
+    fn new(index_offset : u64, data_offset : u64) -> Messages {
+        trace!("new messages index at {}, data at {}", index_offset, data_offset);
         Messages {
             data : VecDeque::new(),
             index : VecDeque::new(),
             data_offset : data_offset,
             index_offset : index_offset,
-            last_index : None,
         }
     }
 
     fn push_data(&mut self, input_data: &[u8]) {
         for c in input_data {
             self.data.push_back(*c);
-            self.data_offset += 1;
         }
     }
 
     fn push_index(&mut self, input_index: u64) {
         self.index.push_back(input_index);
-        self.index_offset += 1;
     }
 }
 
@@ -308,10 +339,27 @@ impl Iterator for Messages {
     fn next(&mut self) -> Option<Self::Item> {
 
         if let Some(idx) = self.index.pop_front() {
+            trace!("messages : last read {}, now read upto {}", self.data_offset, idx);
+            let size = (idx - self.data_offset) as usize;
+            trace!("messages : attempting to pop {} bytes from queue of size {}", size, self.data.len());
+            if (self.data.len() >= size) {
+                let data = self.data.drain(..size).collect::<Vec<_>>();
+                trace!("messages: retrieved data from queue, new size : {}", self.data.len());
+                self.data_offset = idx;
+                self.index_offset += 1;
+                Some(data)
+            } else {
+                trace!("not enough data yet - can't read so putting index back for next call");
+                self.index.push_front(idx); 
+                None
+            }
+
+/*
             if let Some(old_idx) = self.last_index {
 
                 let size = (idx - old_idx) as usize;
 
+                trace!("messages : drain data (a) idx : {}, old_idx {}, size {}", idx, old_idx, size);
                 let data = self.data.drain(..size).collect::<Vec<_>>();
 
                 self.last_index = Some(idx);
@@ -319,6 +367,7 @@ impl Iterator for Messages {
             } else {
                 // first read, get rid of any data before first index
                 let diff = (idx - (self.data_offset - self.data.len() as u64)) as usize;
+                trace!("messages : drain data (b) idx : {}, data_offset {}, diff {}, size {}", idx, self.data_offset, diff, self.data.len());
 
                 if diff > 0 {
                     self.data.drain(..diff);
@@ -327,6 +376,7 @@ impl Iterator for Messages {
                 self.last_index = Some(idx);
                 None
             }
+*/
         } else { None } // no indexes to read
     }
 }
@@ -335,6 +385,7 @@ impl Iterator for Messages {
 mod tests {
     use super::*;
 
+    #[ignore]
     #[test]
     fn test_queue () {
         let message1 = b"This is the message";

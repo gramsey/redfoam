@@ -44,6 +44,8 @@ impl ConsumerClient {
         self.buff.check_seq()?;
         if self.rec_type.is_none() { self.rec_type = self.buff.read_u8().map(|r| r.into()) }
 
+        trace!("server processing rec_size : {:?}", self.buff.rec_size);
+
         match self.rec_type {
             Some(RecordType::Auth) => {
                 self.auth = Auth::new(&mut self.buff)?;
@@ -79,15 +81,18 @@ impl ConsumerClient {
             },
 
             Some(RecordType::ConsumerFollowTopics) => {
+                trace!("Server : found ConsumerFollowTopics");
                 if self.auth.is_some() {
+                    trace!("Server : ConsumerFollowTopics auth ok");
                     match self.buff.read_u32() {
                         Some(topic_id) => {
+                            trace!("Server : ConsumerFollowTopics on {}", topic_id);
                             self.topic_id = Some(topic_id);
                             let (index_pos, data_pos) = topic_list.follow_topic(topic_id, self.id)?;
                             self.rec_type = None;
                             self.buff.reset();
                             //send response
-                            let size = 17u32; // u8 + u64 + u64
+                            let size : u32 = 4 + 1 + 8 + 8; // u8 + u64 + u64
 
                             self.tcp.write(&size.to_le_bytes())
                                 .map_err(|e| Er::ServerTcpWrite(e))?;
@@ -101,7 +106,7 @@ impl ConsumerClient {
                             self.tcp.write(&data_pos.to_le_bytes())
                                 .map_err(|e| Er::ServerTcpWrite(e))?;
                         }, 
-                        None => { /* record MUST have topic id */ },
+                        None => {unimplemented!()},
                     }
                 }
                 Ok(())
@@ -113,7 +118,7 @@ impl ConsumerClient {
     pub fn send_feed(&mut self, offset : u64, buffer : &[u8], feed_type : RecordType) -> Result<(),Er> {
         trace!("send_feed(offset={}, feed_type={}", offset, feed_type as u8);
 
-        let length : u32 = buffer.len() as u32;
+        let length : u32 = 4 + 1 + buffer.len() as u32;
         trace!("   length {}", length);
 
         self.tcp.write(&length.to_le_bytes())

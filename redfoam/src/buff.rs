@@ -19,6 +19,7 @@ macro_rules! make_read_fn {
                 let end = start + size;
                 let result = <$fn_type>::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
                 self.rec_pos += size as u32;
+                self.rec_upto += size as u32;
                 Some(result)
             } else {
                 None
@@ -56,6 +57,7 @@ impl Buff {
         if self.has_n_bytes(1) {
             let result = self.buffer[self.rec_pos as usize];
             self.rec_pos += 1;
+            self.rec_upto += 1;
             Some(result)
         } else {
             None
@@ -211,7 +213,7 @@ mod tests {
 
     #[test]
     fn test_readbuff() {
-        let mut bstr : &[u8] = b"\x0e\x00\x00\x00Eat My Shorts!"; 
+        let mut bstr : &[u8] = b"\x12\x00\x00\x00Eat My Shorts!"; 
         let mut b = Buff::new();
 
         match b.read_data(&mut bstr) {
@@ -221,7 +223,7 @@ mod tests {
 
         let result1 = b.read_u32();
         assert!(result1.is_some(), "should be able to read u32");
-        assert_eq!(result1, Some(14), "should be size of data (14 or x0e)"); 
+        assert_eq!(result1, Some(18), "should be size of data (14 or x12)"); 
 
         b.rec_size=result1;
 
@@ -236,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_fullbuff() {
-        let mut bstr : &[u8] = b"\x7c\x06\x00\x00012345678901234567890123456789012345678901234567890123456789\
+        let mut bstr : &[u8] = b"\x80\x06\x00\x00012345678901234567890123456789012345678901234567890123456789\
         0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
         0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
         0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789\
@@ -263,7 +265,7 @@ mod tests {
 
         let result1 = b.read_u32();
         assert!(result1.is_some(), "should be able to read u32");
-        assert_eq!(result1, Some(1660), "should be size of data (14 or x0e)"); 
+        assert_eq!(result1, Some(1664), "should be size of data (1664 or x0680)"); 
 
         b.rec_size=result1;
         assert_eq!(b.data().len(), 1020 as usize, "should be the first 1020 bytes of message"); 
@@ -282,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_multirec() {
-        let mut bstr : &[u8] = b"\x0e\x00\x00\x00Eat My Shorts!\x24\x00\x00\x00I have bumble bees in my back garden"; 
+        let mut bstr : &[u8] = b"\x12\x00\x00\x00Eat My Shorts!\x28\x00\x00\x00I have bumble bees in my back garden"; 
         let mut b = Buff::new();
 
         match b.read_data(&mut bstr) {
@@ -292,7 +294,7 @@ mod tests {
 
         let result1 = b.read_u32();
         assert!(result1.is_some(), "should be able to read u32");
-        assert_eq!(result1, Some(14), "should be size of data (14 or x0e)"); 
+        assert_eq!(result1, Some(18), "should be size of data (18 or x12)"); 
 
         b.rec_size=result1;
 
@@ -304,7 +306,7 @@ mod tests {
 
         let result2 = b.read_u32();
         assert!(result2.is_some(), "should be able to read u32");
-        assert_eq!(result2, Some(36), "should be size of data (36 or x24)"); 
+        assert_eq!(result2, Some(40), "should be size of data (40 or x28)"); 
 
         b.rec_size=result2;
 
