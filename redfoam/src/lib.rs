@@ -1,4 +1,5 @@
 pub mod logger;
+pub mod config;
 pub mod client;
 pub mod producer;
 pub mod consumer;
