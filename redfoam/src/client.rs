@@ -342,7 +342,7 @@ impl Iterator for Messages {
             trace!("messages : last read {}, now read upto {}", self.data_offset, idx);
             let size = (idx - self.data_offset) as usize;
             trace!("messages : attempting to pop {} bytes from queue of size {}", size, self.data.len());
-            if (self.data.len() >= size) {
+            if self.data.len() >= size {
                 let data = self.data.drain(..size).collect::<Vec<_>>();
                 trace!("messages: retrieved data from queue, new size : {}", self.data.len());
                 self.data_offset = idx;

@@ -1,18 +1,25 @@
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
-struct Config {
-    node_id : u32,
-    topics : Vec<TopicConfig>,
+pub struct Config {
+    pub node_id : u32,
+    pub topics : Vec<TopicConfig>,
+}
+
+impl Config {
+    pub fn new() -> Config {
+        let config_string: &str = "node_id = 0\n[[topics]]\ntopic_id = 1\ntopic_name = \"test\"\nreplication = 0\nfolder=\"/tmp\"\nfile_mask=4";
+        toml::from_str(config_string).unwrap()
+    }
 }
 
 #[derive(Deserialize, Debug)]
-struct TopicConfig {
-    topic_id : u32,
-    topic_name : String,
-    folder : String,
-    replication : u8,
-    file_mask : u8, // 16 - how many hex digits in filename, that is 2^(file_mask*4) = number of records in single file
+pub struct TopicConfig {
+    pub topic_id : u32,
+    pub topic_name : String,
+    pub folder : String,
+    pub replication : u8,
+    pub file_mask : u8, // 16 - how many hex digits in filename, that is 2^(file_mask*4) = number of records in single file
 }
 
 #[test]

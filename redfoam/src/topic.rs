@@ -7,6 +7,7 @@ use std::convert::TryInto;
 
 use super::er::Er;
 use super::trace;
+use super::config::{Config, TopicConfig};
 
 
 pub struct Topic {
@@ -33,6 +34,7 @@ impl Topic {
         let last_index = f_index.seek(SeekFrom::End(0)).unwrap(); 
         let last_data = f_data.seek(SeekFrom::End(0)).unwrap(); 
         let idx = last_index / 8;
+
 
         trace!("creating topic name : {}  idx : {}, data file : {}, index file : {} last index offset : {} last data offset : {}",topic_name, idx, data_fname, index_fname, last_index, last_data);   
 
@@ -154,8 +156,9 @@ impl TopicList {
         let watchers : HashMap<WatchDescriptor, u32> = HashMap::new();
         let followers : HashMap<u32, Vec<u32>> = HashMap::new();
         let notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
+        let config = Config::new();
 
-        let mut t = TopicList {
+        let mut topic_list = TopicList {
             topic_names,
             topics,
             followers,
@@ -163,8 +166,10 @@ impl TopicList {
             notify,
         };
 
-        t.add_topic(1, String::from("test"), is_producer);
-        t
+        for topic_cfg in config.topics {
+            topic_list.add_topic(topic_cfg.topic_id, topic_cfg.topic_name, is_producer);
+        }
+        topic_list
     }
 
     fn add_topic(&mut self, topic_id : u32, topic_name : String, is_producer : bool) -> Result<(),Er>{
