@@ -225,9 +225,9 @@ impl ConsumerServer {
     fn send_to_client(&mut self, topic_id : u32, file_name : &str) -> Result<(), Er> {
         let mut buffer = [0; 1010];
 
-        let feed_type = match file_name {
-            "index" => RecordType::IndexFeed, 
-            "data"  => RecordType::DataFeed,
+        let feed_type = match file_name.chars().nth(0) {
+            Some('i') => RecordType::IndexFeed, 
+            Some('d') => RecordType::DataFeed,
             _       => RecordType::Undefined,
         };
 

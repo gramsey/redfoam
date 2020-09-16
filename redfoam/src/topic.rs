@@ -322,6 +322,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn latest_file() {
+        fs::create_dir("/tmp/testx");
+        File::create("/tmp/testx/d0000000000000000");
+        File::create("/tmp/testx/i0000000000000000");
+        File::create("/tmp/testx/d000000000000001c");
+        File::create("/tmp/testx/i000000000000001c");
+        File::create("/tmp/testx/d00000000000000a3");
+        File::create("/tmp/testx/i00000000000000a3");
+
+        let file_number = Topic::latest_file_number(&String::from("testx"), &String::from("/tmp")).expect("file_numb");
+        assert_eq!(file_number, 0xa3);
+    }
+
+    #[test]
     fn test_topicwrite() {
         let mut t = Topic::open(&String::from("test"), &String::from("/tmp"), 0, 0,  true).expect("trying to create topic");
         let idx = t.index;
@@ -349,8 +363,6 @@ mod tests {
             Err(e) => assert!(false, "error reading data {}", e),
             Ok(n) => assert_eq!(n, idx as usize, "check {} data bytes read", n),
         }
-
-        
     }
 
     #[test]
@@ -393,7 +405,9 @@ mod tests {
                     None => assert!(false, "topic id missing from watcher list"),
                 }
                 match e.name {
-                    Some(name) => assert_eq!(name, "data"), 
+                    Some(name) => {
+                        assert_eq!(name.to_str().unwrap().chars().nth(0), Some('d'));
+                    }, 
                     None => assert!(false, "event should have a file name"),
                 }
             },
@@ -408,7 +422,9 @@ mod tests {
                     None => assert!(false, "topic id missing from watcher list"),
                 }
                 match e.name {
-                    Some(name) => assert_eq!(name, "index"), 
+                    Some(name) => {
+                        assert_eq!(name.to_str().unwrap().chars().nth(0), Some('i'));
+                    }, 
                     None => assert!(false, "event should have a file name"),
                 }
             },
