@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter};
 //use std::convert;
 use std::io;
 use std::sync::mpsc;
+use std::num;
 
 #[derive(Debug)]
 pub enum Er {
@@ -20,6 +21,7 @@ pub enum Er {
     FailedToReadDataStart,
     TopicNotFound,
     IsNone,
+    BadOffset(String, num::ParseIntError),
 }
 
 impl Display for Er {
@@ -63,6 +65,10 @@ impl Display for Er {
             Er::FailedToReadDataStart => "Could not read expected start value from consumer header message",
             Er::TopicNotFound => "Trying to retrieve topic - not found in collection",
             Er::IsNone => "Value returned as 'None' but this should not be possible",
+            Er::BadOffset(f_name, e) => {
+                s = format!("Bad topic filename {} - cannot parse the hex offset value :{}", f_name, e);
+                s.as_str()
+            },
         };
         f.write_str(message)
     }
