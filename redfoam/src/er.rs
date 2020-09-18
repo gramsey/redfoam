@@ -15,6 +15,7 @@ pub enum Er {
     IsClosed,
     InvalidSequence,
     CantReadFile(io::Error),
+    CantOpenFile(io::Error),
     InotifyError(io::Error),
     FailedToReturnMessage(mpsc::SendError<Vec<u8>>),
     NoConsumerStart,
@@ -55,6 +56,10 @@ impl Display for Er {
             },
             Er::CantReadFile(e) => {
                 s = format!("Failed to read topic file :{}", e);
+                s.as_str()
+            },
+            Er::CantOpenFile(e) => {
+                s = format!("Failed to open topic file :{}", e);
                 s.as_str()
             },
             Er::FailedToReturnMessage(e) => {

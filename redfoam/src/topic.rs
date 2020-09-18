@@ -19,34 +19,21 @@ pub struct Topic {
     pub last_data_offset : u64,
     pub last_index_offset : u64,
     is_producer : bool,
-    file_mask : u8,
+    config : TopicConfig,
 }
 impl Topic {
 
-    pub fn open (topic_name : &String, folder : &String, replication : u8, file_mask : u8, is_producer : bool) 
-    -> Result<Topic, Er>  {
-
-        let file_number = Topic::latest_file_number(topic_name, folder)?;
-        println!("file_number : {} ", file_number);
-
-        let data_fname = format!("{}/{}/d{:016x}",folder, topic_name, file_number);
-        let index_fname = format!("{}/{}/i{:016x}", folder, topic_name, file_number);
-
-        println!("data_fname {} index_fname {}", data_fname, index_fname);
+    pub fn open (config : TopicConfig, is_producer : bool) -> Result<Topic, Er>  {
 
         let mut f_options = OpenOptions::new();
-
         if is_producer { f_options.append(true); } else { f_options.read(true); }
 
-        let mut f_data = f_options.open(&data_fname).expect("cant open topic data file");
-        let mut f_index = f_options.open(&index_fname).expect("cant open topic data file");
+        let mut f_data  = Topic::latest_file(&mut f_options, 'd', &config)?;
+        let mut f_index = Topic::latest_file(&mut f_options, 'i', &config)?;
 
         let last_index = f_index.seek(SeekFrom::End(0)).unwrap(); 
         let last_data = f_data.seek(SeekFrom::End(0)).unwrap(); 
         let idx = last_index / 8;
-
-
-        trace!("creating topic name : {}  idx : {}, data file : {}, index file : {} last index offset : {} last data offset : {}",topic_name, idx, data_fname, index_fname, last_index, last_data);   
 
         Ok(Topic {
             index : idx,
@@ -56,8 +43,19 @@ impl Topic {
             last_data_offset : last_data,
             last_index_offset : last_index,
             is_producer : is_producer,
-            file_mask : file_mask,
+            config : config,
         })
+    }
+
+
+    fn latest_file(file_opener: &mut OpenOptions, prefix : char, config : &TopicConfig) -> Result<File, Er> {
+        let file_number = Topic::latest_file_number(&config.topic_name, &config.folder)?;
+        let file_name = format!("{}/{}/{}{:016x}", config.folder, config.topic_name, prefix, file_number);
+
+        trace!("opening filename {}", file_name);
+
+        file_opener.open(&file_name)
+            .map_err(|e| Er::CantOpenFile(e))
     }
 
     fn latest_file_number(topic_name : &String, folder : &String) -> Result<u64, Er> {
@@ -99,13 +97,13 @@ impl Topic {
     }
 
     fn file_number(&self, offset : u64) -> String {
-        let records_per_file = 2^(self.file_mask as u64 * 4);
+        let records_per_file = 2^(self.config.file_mask as u64 * 4);
         let file_number = offset / records_per_file; /* integer division, remainder is ignored */
         format!("{:16x}",file_number)
     }
 
     fn file_position(&self, offset : u64) -> usize {
-        let records_per_file = 2^(self.file_mask as u64 * 4);
+        let records_per_file = 2^(self.config.file_mask as u64 * 4);
         (offset % records_per_file) as usize
     }
 
@@ -230,7 +228,7 @@ impl TopicList {
         let watchers : HashMap<WatchDescriptor, u32> = HashMap::new();
         let followers : HashMap<u32, Vec<u32>> = HashMap::new();
         let notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
-        let config = Config::new();
+        let mut config = Config::new();
 
         let mut topic_list = TopicList {
             topic_names,
@@ -240,31 +238,26 @@ impl TopicList {
             notify,
         };
 
-        for topic_cfg in config.topics {
-            topic_list.add_topic(
-                topic_cfg.topic_id, 
-                topic_cfg.topic_name, 
-                topic_cfg.folder,
-                topic_cfg.replication,
-                topic_cfg.file_mask,
-                is_producer);
+        while let Some(topic_cfg) = config.topics.pop() {
+            topic_list.add_topic(topic_cfg, is_producer);
         }
+
         topic_list
     }
 
-    fn add_topic(&mut self, topic_id : u32, topic_name : String, topic_folder : String, replication : u8, file_mask : u8, is_producer : bool) -> Result<(),Er>{
+    fn add_topic(&mut self, topic_cfg : TopicConfig, is_producer : bool) -> Result<(),Er>{
 
-        let t = Topic::open(&topic_name, &topic_folder, replication, file_mask, is_producer)?;
+        let t = Topic::open(topic_cfg, is_producer)?;
 
         if !is_producer {
-            let folder = format!("/tmp/{}", topic_name);
+            let folder = format!("{}/{}", t.config.folder, t.config.topic_name);
             let wd = self.notify.add_watch(folder, WatchMask::MODIFY)
                 .map_err(|e| Er::InotifyError(e))?;
-            self.watchers.insert(wd, topic_id);
+            self.watchers.insert(wd, t.config.topic_id);
         }
 
-        self.topics.insert(topic_id, t);
-        self.topic_names.insert(topic_name, topic_id);
+        self.topic_names.insert(t.config.topic_name.clone(), t.config.topic_id);
+        self.topics.insert(t.config.topic_id, t);
 
         Ok(())
     }
@@ -337,7 +330,15 @@ mod tests {
 
     #[test]
     fn test_topicwrite() {
-        let mut t = Topic::open(&String::from("test"), &String::from("/tmp"), 0, 0,  true).expect("trying to create topic");
+        let topic_config = TopicConfig {
+            topic_id : 1,
+            topic_name : String::from("test"),
+            folder : String::from("/tmp"),
+            replication : 0,
+            file_mask : 0,
+        };
+
+        let mut t = Topic::open(topic_config, true).expect("trying to create topic");
         let idx = t.index;
         let written : usize = t.write(&b"hello"[..]);
         assert_eq!(written, 5, "5 bytes should be written to file");
@@ -347,7 +348,15 @@ mod tests {
 
     #[test]
     fn test_readfirstrecord() {
-        let mut t = Topic::open(&String::from("test"), &String::from("/tmp"), 0, 0,  false).expect("trying to create topic");
+        let topic_config = TopicConfig {
+            topic_id : 1,
+            topic_name : String::from("test"),
+            folder : String::from("/tmp"),
+            replication : 0,
+            file_mask : 0,
+        };
+
+        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
         let mut buf : [u8; 8] = [0;8];
 
         match t.read_index_into(&mut buf, 0) {
@@ -367,7 +376,15 @@ mod tests {
 
     #[test]
     fn test_readindex() {
-        let mut t = Topic::open(&String::from("test"), &String::from("/tmp"), 0, 0,  false).expect("trying to create topic");
+        let topic_config = TopicConfig {
+            topic_id : 1,
+            topic_name : String::from("test"),
+            folder : String::from("/tmp"),
+            replication : 0,
+            file_mask : 0,
+        };
+
+        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
         match t._read_index(1) {
             Ok((position, size)) => {
                 assert_eq!(position, 5);
