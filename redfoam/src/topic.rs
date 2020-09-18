@@ -52,8 +52,6 @@ impl Topic {
         let file_number = Topic::latest_file_number(&config.topic_name, &config.folder)?;
         let file_name = format!("{}/{}/{}{:016x}", config.folder, config.topic_name, prefix, file_number);
 
-        trace!("opening filename {}", file_name);
-
         file_opener.open(&file_name)
             .map_err(|e| Er::CantOpenFile(e))
     }
@@ -62,51 +60,37 @@ impl Topic {
         let topic_folder = format!("{}/{}", folder, topic_name);
 
         let mut latest_file_number: u64 = 0;
-        match fs::read_dir(topic_folder) {
-            Ok(files) => {
-                for f in files {
-                    match f {
-                        Ok(f) => {
-                            if let Some(f_name) = f.file_name().to_str() {
-                                let first_char = f_name.chars().nth(0).ok_or(Er::IsNone)?;
-                                if first_char == 'i' {
-                                    match u64::from_str_radix(&f_name[1..], 16) {
-                                        Ok(file_number) =>  {
-                                            if file_number > latest_file_number { 
-                                                latest_file_number = file_number
-                                            }
-                                        },
-                                        Err(e)  => {
-                                            return Err(Er::BadOffset(String::from(f_name), e))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            unimplemented!();
-                        }
-                    }
+
+        for entry in fs::read_dir(topic_folder)
+                        .map_err(|e| Er::CantReadDir(e))? {
+
+            let file = entry
+                .map_err(|e| Er::CantReadFile(e))?;
+
+            let file_name = file.file_name();
+
+            let f_name = file_name.to_str()
+                .ok_or(Er::BadFileName)?;
+
+            let first_char = f_name.chars().nth(0)
+                .ok_or(Er::BadFileName)?;
+
+            if first_char == 'i' {
+                let file_number = u64::from_str_radix(&f_name[1..], 16)
+                    .map_err(|e| Er::BadOffset(String::from(f_name), e))?;
+
+                if file_number > latest_file_number { 
+                    latest_file_number = file_number
                 }
-            },
-            Err(_) => {
-                unimplemented!();
             }
         }
         Ok(latest_file_number)
-    }
-
-    fn file_number(&self, offset : u64) -> String {
-        let records_per_file = 2^(self.config.file_mask as u64 * 4);
-        let file_number = offset / records_per_file; /* integer division, remainder is ignored */
-        format!("{:16x}",file_number)
     }
 
     fn file_position(&self, offset : u64) -> usize {
         let records_per_file = 2^(self.config.file_mask as u64 * 4);
         (offset % records_per_file) as usize
     }
-
 
     fn data_file_at(&mut self, offset: usize) -> &File {
         unimplemented!();

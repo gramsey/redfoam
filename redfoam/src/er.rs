@@ -15,6 +15,7 @@ pub enum Er {
     IsClosed,
     InvalidSequence,
     CantReadFile(io::Error),
+    CantReadDir(io::Error),
     CantOpenFile(io::Error),
     InotifyError(io::Error),
     FailedToReturnMessage(mpsc::SendError<Vec<u8>>),
@@ -22,6 +23,7 @@ pub enum Er {
     FailedToReadDataStart,
     TopicNotFound,
     IsNone,
+    BadFileName,
     BadOffset(String, num::ParseIntError),
 }
 
@@ -58,6 +60,10 @@ impl Display for Er {
                 s = format!("Failed to read topic file :{}", e);
                 s.as_str()
             },
+            Er::CantReadDir(e) => {
+                s = format!("Failed to read topic directory :{}", e);
+                s.as_str()
+            },
             Er::CantOpenFile(e) => {
                 s = format!("Failed to open topic file :{}", e);
                 s.as_str()
@@ -69,6 +75,7 @@ impl Display for Er {
             Er::NoConsumerStart => "Recieved content from server, but never recieved the header message containing start references.",
             Er::FailedToReadDataStart => "Could not read expected start value from consumer header message",
             Er::TopicNotFound => "Trying to retrieve topic - not found in collection",
+            Er::BadFileName => "Trying to parse a file for topic - bad filename",
             Er::IsNone => "Value returned as 'None' but this should not be possible",
             Er::BadOffset(f_name, e) => {
                 s = format!("Bad topic filename {} - cannot parse the hex offset value :{}", f_name, e);
