@@ -15,6 +15,7 @@ pub enum Er {
     IsClosed,
     InvalidSequence,
     CantReadFile(io::Error),
+    CantWriteFile(io::Error),
     CantReadDir(io::Error),
     CantOpenFile(io::Error),
     InotifyError(io::Error),
@@ -58,6 +59,10 @@ impl Display for Er {
             },
             Er::CantReadFile(e) => {
                 s = format!("Failed to read topic file :{}", e);
+                s.as_str()
+            },
+            Er::CantWriteFile(e) => {
+                s = format!("Failed to write to topic file :{}", e);
                 s.as_str()
             },
             Er::CantReadDir(e) => {

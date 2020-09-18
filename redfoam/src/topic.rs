@@ -2,14 +2,12 @@ use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Write, Read, SeekFrom, Seek};
 use inotify::{Inotify, WatchMask, WatchDescriptor };
-use std::str;
 use std::collections::HashMap;
 use std::convert::TryInto;
 
 use super::er::Er;
 use super::trace;
 use super::config::{Config, TopicConfig};
-
 
 pub struct Topic {
     index : u64,
@@ -25,11 +23,8 @@ impl Topic {
 
     pub fn open (config : TopicConfig, is_producer : bool) -> Result<Topic, Er>  {
 
-        let mut f_options = OpenOptions::new();
-        if is_producer { f_options.append(true); } else { f_options.read(true); }
-
-        let mut f_data  = Topic::latest_file(&mut f_options, 'd', &config)?;
-        let mut f_index = Topic::latest_file(&mut f_options, 'i', &config)?;
+        let mut f_data  = Topic::latest_file(is_producer, 'd', &config)?;
+        let mut f_index = Topic::latest_file(is_producer, 'i', &config)?;
 
         let last_index = f_index.seek(SeekFrom::End(0)).unwrap(); 
         let last_data = f_data.seek(SeekFrom::End(0)).unwrap(); 
@@ -48,11 +43,12 @@ impl Topic {
     }
 
 
-    fn latest_file(file_opener: &mut OpenOptions, prefix : char, config : &TopicConfig) -> Result<File, Er> {
+    fn latest_file(is_producer : bool, prefix : char, config : &TopicConfig) -> Result<File, Er> {
+
         let file_number = Topic::latest_file_number(&config.topic_name, &config.folder)?;
         let file_name = format!("{}/{}/{}{:016x}", config.folder, config.topic_name, prefix, file_number);
 
-        file_opener.open(&file_name)
+        Self::file_opener(is_producer).open(&file_name)
             .map_err(|e| Er::CantOpenFile(e))
     }
 
@@ -87,9 +83,20 @@ impl Topic {
         Ok(latest_file_number)
     }
 
-    fn file_position(&self, offset : u64) -> usize {
+    fn file_opener(is_producer : bool) -> OpenOptions {
+        let mut f_options = OpenOptions::new();
+        if is_producer { f_options.append(true).create(true); } else { f_options.read(true); }
+        f_options
+    }
+
+    fn file_position(&self, record_index : u64) -> usize {
         let records_per_file = 2^(self.config.file_mask as u64 * 4);
-        (offset % records_per_file) as usize
+        (record_index % records_per_file) as usize
+    }
+
+    fn file_number(&self, record_index : u64) -> usize {
+        let records_per_file = 2^(self.config.file_mask as u64 * 4);
+        (record_index % records_per_file) as usize
     }
 
     fn data_file_at(&mut self, offset: usize) -> &File {
@@ -104,22 +111,40 @@ impl Topic {
         result
     }
 
-
-    pub fn write(&mut self, slice : &[u8]) -> usize {
-        println!("content :_{}_", str::from_utf8(slice).expect("failed to format"));
-        let written = self.data_file.write(slice).unwrap();
-        written
+    pub fn write(&mut self, slice : &[u8]) -> Result<usize, Er> {
+        let written = self.data_file.write(slice)
+            .map_err(|e| Er::CantWriteFile(e))?;
+        Ok(written)
     }
 
-    pub fn end_rec(&mut self) -> u64 {
+    pub fn end_rec(&mut self) -> Result<u64, Er> {
         let idx = self.index;
         self.index += 1;
 
-        let file_position = self.data_file.seek(SeekFrom::End(0)).unwrap();
+        let file_position = self.data_file.seek(SeekFrom::End(0))
+            .map_err(|e| Er::CantReadFile(e))?;
+
         let file_position_bytes = (file_position as u64).to_le_bytes();
-        self.index_file.write( &file_position_bytes).unwrap();
+
+        self.index_file.write( &file_position_bytes)
+            .map_err(|e| Er::CantWriteFile(e))?;
+
         self.current_producer = None;
-        idx
+        self.switch_file_check()?;
+        Ok(idx)
+    }
+
+    fn switch_file_check (&mut self) -> Result<(), Er> {
+        if self.file_position(self.index) == 0 {
+            let num = self.file_number(self.index);
+
+            self.data_file = Self::file_opener(self.is_producer).open(format!("d{}", num))
+                .map_err(|e| Er::CantOpenFile(e))?;
+
+            self.index_file = Self::file_opener(self.is_producer).open(format!("i{}", num))
+                .map_err(|e| Er::CantOpenFile(e))?;
+        }
+        Ok(())
     }
 
     pub fn read_index_into(&mut self, buf : &mut [u8], start : u64) -> Result<usize,Er> {
@@ -275,9 +300,12 @@ impl TopicList {
     }
 
 
-    pub fn write(&mut self, topic_id : u32, data : &[u8]) -> usize {
-        let written = self.topics.get_mut(&topic_id).unwrap().write(data);
-        written
+    pub fn write(&mut self, topic_id : u32, data : &[u8]) -> Result<usize, Er> {
+
+        let t = self.topics.get_mut(&topic_id)
+            .ok_or(Er::TopicNotFound)?;
+
+        t.write(data)
     }
 
     pub fn read_index(&mut self, topic_id : u32, data : &mut [u8]) -> Result<(u64, usize),Er> {
@@ -289,8 +317,10 @@ impl TopicList {
         let result = self.topics.get_mut(&topic_id).unwrap().read_data_latest(data)?;
         Ok(result)
     }
-    pub fn end_record(&mut self, topic_id : u32) -> u64 {
-        self.topics.get_mut(&topic_id).unwrap().end_rec()
+    pub fn end_record(&mut self, topic_id : u32) -> Result<u64, Er> {
+        let t = self.topics.get_mut(&topic_id)
+            .ok_or(Er::TopicNotFound)?;
+        t.end_rec()
     }
 }
 
@@ -324,7 +354,7 @@ mod tests {
 
         let mut t = Topic::open(topic_config, true).expect("trying to create topic");
         let idx = t.index;
-        let written : usize = t.write(&b"hello"[..]);
+        let written : usize = t.write(&b"hello"[..]).expect("trying to write to file");
         assert_eq!(written, 5, "5 bytes should be written to file");
         t.end_rec();
         assert_eq!(t.index, idx + 1, "checking index is incremented by one");
@@ -391,7 +421,7 @@ mod tests {
         let mut tl_producer = TopicList::new(true);
         let mut tl_consumer = TopicList::new(false);
 
-        tl_producer.write(1,&b"TopicList test message"[..]);
+        tl_producer.write(1,&b"TopicList test message"[..]).expect("trying to write to file");
         tl_producer.end_record(1);
 
         let mut buffer = [0; 1024];

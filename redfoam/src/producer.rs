@@ -55,7 +55,7 @@ impl ProducerClient {
                             topic_list.write(topic_id, self.buff.data());
 
                             if self.buff.is_end_of_record() {
-                                let idx = topic_list.end_record(topic_id);
+                                let idx = topic_list.end_record(topic_id)?;
                                 self.tcp.write(&[self.buff.seq]).unwrap();
                                 self.tcp.write(&idx.to_le_bytes()).unwrap();
                                 self.rec_type = None;
