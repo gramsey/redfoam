@@ -24,6 +24,7 @@ pub enum Er {
     FailedToReadDataStart,
     TopicNotFound,
     IsNone,
+    InvalidEventMask,
     BadFileName,
     BadOffset(String, num::ParseIntError),
 }
@@ -82,6 +83,7 @@ impl Display for Er {
             Er::TopicNotFound => "Trying to retrieve topic - not found in collection",
             Er::BadFileName => "Trying to parse a file for topic - bad filename",
             Er::IsNone => "Value returned as 'None' but this should not be possible",
+            Er::InvalidEventMask => "Event mask returned from event is unexpected",
             Er::BadOffset(f_name, e) => {
                 s = format!("Bad topic filename {} - cannot parse the hex offset value :{}", f_name, e);
                 s.as_str()

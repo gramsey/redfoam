@@ -52,10 +52,11 @@ impl ProducerClient {
 
                     if self.buff.has_data() {
                         if let Some(topic_id) = self.topic_id {
-                            topic_list.write(topic_id, self.buff.data());
+                            let topic = topic_list.topic_for_id(topic_id)?;
+                            topic.write(self.buff.data())?;
 
                             if self.buff.is_end_of_record() {
-                                let idx = topic_list.end_record(topic_id)?;
+                                let idx = topic.end_rec()?;
                                 self.tcp.write(&[self.buff.seq]).unwrap();
                                 self.tcp.write(&idx.to_le_bytes()).unwrap();
                                 self.rec_type = None;

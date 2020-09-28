@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use inotify::{EventMask, Event};
+use std::ffi::OsStr;
 
 use super::{trace};
 
@@ -146,17 +148,19 @@ pub struct ConsumerServer {
     next_client_id : u32,
 }
 impl ConsumerServer {
-    pub fn new (rx :  mpsc::Receiver<TcpStream>) -> ConsumerServer {
+    pub fn init (rx :  mpsc::Receiver<TcpStream>) -> ConsumerServer {
 
         let client_list : HashMap<u32, ConsumerClient> = HashMap::new();
-        let topic_list = TopicList::new(false);
+        let topic_list = TopicList::init(false);
 
-        ConsumerServer {
-            rx,
-            client_list,
-            topic_list,
-            next_client_id : 0,
-        }
+        if let Ok(tl) = topic_list {
+            ConsumerServer {
+                rx,
+                client_list,
+                topic_list,
+                next_client_id : 0,
+            }
+        } else panic!("failed to initialise topic list");
     }
 
     pub fn run (&mut self) { 
@@ -198,14 +202,35 @@ impl ConsumerServer {
             let events = self.topic_list.notify.read_events(&mut event_buffer)
                 .expect("Error while reading events");
 
+
             for e in events {
+                let (file_name, topic_id, mask) = self.unwrap_event(e).unwrap();
+
+                let action_result = match mask {
+                    EventMask::CREATE => {
+                        let t = self.topic_list.topic_for_id(topic_id).expect("topic should exist in list");
+                        t.switch_file(file_name)
+                    },
+                    EventMask::MODIFY => {
+                        self.send_to_client(topic_id, file_name)  
+                    },
+                    _ => Err(Er::InvalidEventMask)
+                };
+
+                action_result.expect("Failed to take appropriate action on event");
+                /*
                 match self.topic_list.watchers.get(&e.wd) {
                     Some(topic_id) => {
                         match e.name {
                             Some(event_name) => {
                                 if let Some(file_name) = event_name.to_str() {
                                     let t_id = *topic_id;
-                                    self.send_to_client(t_id, file_name);  
+                                    if e.mask == EventMask::CREATE {
+                                        let mut t = self.topic_list.topic_for_id(t_id).expect("topic should exist in list");
+                                        t.switch_file(file_name);
+                                    } else {
+                                        self.send_to_client(t_id, file_name);  
+                                    }
                                 } else {
                                     unimplemented!();
                                 }
@@ -215,11 +240,24 @@ impl ConsumerServer {
                     },
                     None => assert!(false, "topic id missing from watcher list"),
                 }
+                */
             }
 
 
             thread::sleep(Duration::from_millis(100))
         }
+    }
+
+    fn unwrap_event<'a>(&self, ev : Event<&'a OsStr>) -> Result<(&'a str, u32, EventMask), Er> {
+
+        let topic_id = self.topic_list.watchers.get(&ev.wd)
+            .ok_or(Er::TopicNotFound)?;
+
+        let name = ev.name
+            .ok_or(Er::BadFileName)?
+            .to_str().ok_or(Er::BadFileName)?;
+
+        return Ok((name, *topic_id, ev.mask))
     }
 
     fn send_to_client(&mut self, topic_id : u32, file_name : &str) -> Result<(), Er> {
@@ -231,9 +269,11 @@ impl ConsumerServer {
             _       => RecordType::Undefined,
         };
 
+        let topic = self.topic_list.topic_for_id(topic_id)?;
+
         let (offset, size) = match feed_type {
-            RecordType::IndexFeed => self.topic_list.read_index(topic_id, &mut buffer)?,
-            RecordType::DataFeed => self.topic_list.read_data(topic_id, &mut buffer)?,
+            RecordType::IndexFeed => topic.read_index_latest(&mut buffer)?,
+            RecordType::DataFeed => topic.read_data_latest(&mut buffer)?,
             _ => (0, 0),
         };
 

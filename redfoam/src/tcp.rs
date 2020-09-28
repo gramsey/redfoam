@@ -52,7 +52,7 @@ macro_rules! make_server {
                 $typename { 
                     rx : rx,
                     client_list : Vec::new(),
-                    topic_list : TopicList::new(true),
+                    topic_list : TopicList::init(true)?,
                 }
             }
 

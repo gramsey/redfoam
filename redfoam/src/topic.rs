@@ -83,6 +83,7 @@ impl Topic {
         Ok(latest_file_number)
     }
 
+
     fn file_opener(is_producer : bool) -> OpenOptions {
         let mut f_options = OpenOptions::new();
         if is_producer { f_options.append(true).create(true); } else { f_options.read(true); }
@@ -130,19 +131,33 @@ impl Topic {
             .map_err(|e| Er::CantWriteFile(e))?;
 
         self.current_producer = None;
-        self.switch_file_check()?;
+        self.create_file_check()?;
         Ok(idx)
     }
 
-    fn switch_file_check (&mut self) -> Result<(), Er> {
+    // only called by producers
+    fn create_file_check (&mut self) -> Result<(), Er> {
         if self.file_position(self.index) == 0 {
             let num = self.file_number(self.index);
 
-            self.data_file = Self::file_opener(self.is_producer).open(format!("d{}", num))
+            self.data_file = Self::file_opener(true).open(format!("d{}", num))
                 .map_err(|e| Er::CantOpenFile(e))?;
 
-            self.index_file = Self::file_opener(self.is_producer).open(format!("i{}", num))
+            self.index_file = Self::file_opener(true).open(format!("i{}", num))
                 .map_err(|e| Er::CantOpenFile(e))?;
+        }
+        Ok(())
+    }
+
+    // only called by consumers
+    pub fn switch_file(&mut self, file_name: &str) -> Result<(), Er> {
+        let file = Self::file_opener(false).open(file_name)
+            .map_err(|e| Er::CantOpenFile(e))?;
+
+        match file_name.chars().nth(0).ok_or(Er::BadFileName)? {
+            'i' => self.index_file = file,
+            'd' => self.data_file = file,
+            _ =>  return Err(Er::BadFileName),
         }
         Ok(())
     }
@@ -230,7 +245,7 @@ pub struct TopicList {
 }
 impl TopicList {
 
-    pub fn new (is_producer : bool) -> TopicList {
+    pub fn init (is_producer : bool) -> Result<TopicList, Er> {
 
         let topic_names : HashMap<String, u32> = HashMap::new();
         let topics : HashMap<u32, Topic> = HashMap::new();
@@ -260,7 +275,7 @@ impl TopicList {
 
         if !is_producer {
             let folder = format!("{}/{}", t.config.folder, t.config.topic_name);
-            let wd = self.notify.add_watch(folder, WatchMask::MODIFY)
+            let wd = self.notify.add_watch(folder, WatchMask::MODIFY | WatchMask::CREATE)
                 .map_err(|e| Er::InotifyError(e))?;
             self.watchers.insert(wd, t.config.topic_id);
         }
@@ -273,6 +288,10 @@ impl TopicList {
 
     pub fn get_topic(&self, name : &String) -> u32 {
         *self.topic_names.get(name).unwrap()
+    }
+    pub fn topic_for_id(&mut self, topic_id : u32) -> Result<&mut Topic, Er> {
+        let topic = self.topics.get_mut(&topic_id).ok_or(Er::TopicNotFound)?;
+        Ok(topic)
     }
 /*
     pub fn get_topics(&self, _filter : &str) -> Result<Option<Vec<u16>>,Er> {
@@ -299,29 +318,6 @@ impl TopicList {
         }
     }
 
-
-    pub fn write(&mut self, topic_id : u32, data : &[u8]) -> Result<usize, Er> {
-
-        let t = self.topics.get_mut(&topic_id)
-            .ok_or(Er::TopicNotFound)?;
-
-        t.write(data)
-    }
-
-    pub fn read_index(&mut self, topic_id : u32, data : &mut [u8]) -> Result<(u64, usize),Er> {
-        let result = self.topics.get_mut(&topic_id).unwrap().read_index_latest(data)?;
-        Ok(result)
-    }
-
-    pub fn read_data(&mut self, topic_id : u32, data : &mut [u8]) -> Result<(u64, usize),Er> {
-        let result = self.topics.get_mut(&topic_id).unwrap().read_data_latest(data)?;
-        Ok(result)
-    }
-    pub fn end_record(&mut self, topic_id : u32) -> Result<u64, Er> {
-        let t = self.topics.get_mut(&topic_id)
-            .ok_or(Er::TopicNotFound)?;
-        t.end_rec()
-    }
 }
 
 #[cfg(test)]
@@ -421,8 +417,18 @@ mod tests {
         let mut tl_producer = TopicList::new(true);
         let mut tl_consumer = TopicList::new(false);
 
-        tl_producer.write(1,&b"TopicList test message"[..]).expect("trying to write to file");
-        tl_producer.end_record(1);
+        let p_topic_result = tl_producer.topic_for_id(1);
+
+        assert!(p_topic_result.is_ok(), "topic 1 should be in topic list");
+        let p_topic = p_topic_result.unwrap();
+
+        let write_result = p_topic.write(&b"TopicList test message"[..]);
+        assert!(write_result.is_ok(),  "problem while writing to topic");
+
+        assert_eq!(write_result.unwrap(), 22 as usize);
+
+        let end_rec_result = p_topic.end_rec();
+        assert!(end_rec_result.is_ok(),  "problem while writing to topic for end record");
 
         let mut buffer = [0; 1024];
         let mut events = tl_consumer.notify.read_events(&mut buffer)
@@ -462,9 +468,5 @@ mod tests {
             None => assert!(false, "missing event from inotify"),
         }
     }
-
-
-
-
 }
 
