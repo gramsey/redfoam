@@ -266,7 +266,7 @@ impl TopicList {
             topic_list.add_topic(topic_cfg, is_producer);
         }
 
-        topic_list
+        Ok(topic_list)
     }
 
     fn add_topic(&mut self, topic_cfg : TopicConfig, is_producer : bool) -> Result<(),Er>{
@@ -336,6 +336,23 @@ mod tests {
 
         let file_number = Topic::latest_file_number(&String::from("testx"), &String::from("/tmp")).expect("file_numb");
         assert_eq!(file_number, 0xa3);
+
+        let config = TopicConfig {
+            topic_id : 1,
+            topic_name : String::from("testx"),
+            folder : String::from("/tmp"),
+            replication : 0, 
+            file_mask : 8,
+        };
+
+        let dp_latest_file_result = Topic::latest_file(true, 'd', &config);
+        assert!(dp_latest_file_result.is_ok(), "trying to get latest data file for writing");
+
+        let dp_latest_metadata_result = dp_latest_file_result.unwrap().metadata();
+        assert!(dp_latest_metadata_result.is_ok(), "trying to get latest data file for writing (metadata)");
+
+        let dp_latest_metadata = dp_latest_metadata_result.unwrap();
+        assert!(dp_latest_metadata.is_file(), "checking file object is real file (not directly or sym link");
     }
 
     #[test]
@@ -414,8 +431,8 @@ mod tests {
 
     #[test]
     fn test_topiclist() {
-        let mut tl_producer = TopicList::new(true);
-        let mut tl_consumer = TopicList::new(false);
+        let mut tl_producer = TopicList::init(true).unwrap();
+        let mut tl_consumer = TopicList::init(false).unwrap();
 
         let p_topic_result = tl_producer.topic_for_id(1);
 

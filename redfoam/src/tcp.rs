@@ -52,7 +52,7 @@ macro_rules! make_server {
                 $typename { 
                     rx : rx,
                     client_list : Vec::new(),
-                    topic_list : TopicList::init(true)?,
+                    topic_list : TopicList::init(true).unwrap(),
                 }
             }
 
@@ -125,7 +125,7 @@ pub fn run_consumer_server(addr : String) {
     let (tx, rx) : (mpsc::Sender<TcpStream>, mpsc::Receiver<TcpStream>) = mpsc::channel();
 
     thread::spawn(move || {
-        ConsumerServer::new(rx).run();
+        ConsumerServer::init(rx).run();
     });
 
 

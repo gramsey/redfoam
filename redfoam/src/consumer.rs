@@ -151,16 +151,16 @@ impl ConsumerServer {
     pub fn init (rx :  mpsc::Receiver<TcpStream>) -> ConsumerServer {
 
         let client_list : HashMap<u32, ConsumerClient> = HashMap::new();
-        let topic_list = TopicList::init(false);
+        let topic_list_result = TopicList::init(false);
 
-        if let Ok(tl) = topic_list {
+        if let Ok(topic_list) = topic_list_result {
             ConsumerServer {
                 rx,
                 client_list,
                 topic_list,
                 next_client_id : 0,
             }
-        } else panic!("failed to initialise topic list");
+        } else { panic!("failed to initialise topic list");}
     }
 
     pub fn run (&mut self) { 
