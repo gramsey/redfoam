@@ -13,6 +13,8 @@ pub struct Topic {
     index : u64,
     data_file : File,  /* there are the 'current' files only */
     index_file : File, 
+    data_file_name : String,  /* there are the 'current' files only */
+    index_file_name : String, 
     current_producer : Option<u32>,
     pub last_data_offset : u64,
     pub last_index_offset : u64,
@@ -23,8 +25,14 @@ impl Topic {
 
     pub fn open (config : TopicConfig, is_producer : bool) -> Result<Topic, Er>  {
 
-        let mut f_data  = Topic::latest_file(is_producer, 'd', &config)?;
-        let mut f_index = Topic::latest_file(is_producer, 'i', &config)?;
+        let f_data_name = Topic::latest_file_name('d', &config)?;
+        let f_index_name = Topic::latest_file_name('i', &config)?;
+
+        let mut f_data = Self::file_opener(is_producer).open(&f_data_name)
+            .map_err(|e| Er::CantOpenFile(e))?;
+
+        let mut f_index = Self::file_opener(is_producer).open(&f_index_name)
+            .map_err(|e| Er::CantOpenFile(e))?;
 
         let last_index = f_index.seek(SeekFrom::End(0)).unwrap(); 
         let last_data = f_data.seek(SeekFrom::End(0)).unwrap(); 
@@ -34,6 +42,8 @@ impl Topic {
             index : idx,
             data_file : f_data,
             index_file : f_index,
+            data_file_name : f_data_name,
+            index_file_name : f_index_name,
             current_producer : None,
             last_data_offset : last_data,
             last_index_offset : last_index,
@@ -42,18 +52,9 @@ impl Topic {
         })
     }
 
+    fn latest_file_name(prefix : char, config : &TopicConfig) -> Result<String, Er> {
 
-    fn latest_file(is_producer : bool, prefix : char, config : &TopicConfig) -> Result<File, Er> {
-
-        let file_number = Topic::latest_file_number(&config.topic_name, &config.folder)?;
-        let file_name = format!("{}/{}/{}{:016x}", config.folder, config.topic_name, prefix, file_number);
-
-        Self::file_opener(is_producer).open(&file_name)
-            .map_err(|e| Er::CantOpenFile(e))
-    }
-
-    fn latest_file_number(topic_name : &String, folder : &String) -> Result<u64, Er> {
-        let topic_folder = format!("{}/{}", folder, topic_name);
+        let topic_folder = format!("{}/{}", &config.folder, &config.topic_name);
 
         let mut latest_file_number: u64 = 0;
 
@@ -71,7 +72,7 @@ impl Topic {
             let first_char = f_name.chars().nth(0)
                 .ok_or(Er::BadFileName)?;
 
-            if first_char == 'i' {
+            if first_char == prefix {
                 let file_number = u64::from_str_radix(&f_name[1..], 16)
                     .map_err(|e| Er::BadOffset(String::from(f_name), e))?;
 
@@ -80,9 +81,9 @@ impl Topic {
                 }
             }
         }
-        Ok(latest_file_number)
-    }
 
+        Ok(format!("{}/{}/{}{:016x}", config.folder, config.topic_name, prefix, latest_file_number))
+    }
 
     fn file_opener(is_producer : bool) -> OpenOptions {
         let mut f_options = OpenOptions::new();
@@ -110,6 +111,26 @@ impl Topic {
         unimplemented!();
         let mut result = &self.index_file;
         result
+    }
+
+    pub fn switch_file(&mut self, file_name : &str) -> Result<(), Er> {
+        match file_name.chars().nth(0) {
+            Some('i') => {
+                self.index_file_name = String::from(file_name);
+                self.index_file = Self::file_opener(false).open(file_name) //false here as this is only called by consumers
+                    .map_err(|e| Er::CantOpenFile(e))?;
+                Ok(())
+            },
+            Some('d') => {
+                self.data_file_name = String::from(file_name);
+                self.data_file = Self::file_opener(false).open(file_name) //false here as this is only called by consumers
+                    .map_err(|e| Er::CantOpenFile(e))?;
+                Ok(())
+            },
+            _ => {
+                Err(Er::BadFileName)
+            },
+        }
     }
 
     pub fn write(&mut self, slice : &[u8]) -> Result<usize, Er> {
@@ -145,19 +166,6 @@ impl Topic {
 
             self.index_file = Self::file_opener(true).open(format!("i{}", num))
                 .map_err(|e| Er::CantOpenFile(e))?;
-        }
-        Ok(())
-    }
-
-    // only called by consumers
-    pub fn switch_file(&mut self, file_name: &str) -> Result<(), Er> {
-        let file = Self::file_opener(false).open(file_name)
-            .map_err(|e| Er::CantOpenFile(e))?;
-
-        match file_name.chars().nth(0).ok_or(Er::BadFileName)? {
-            'i' => self.index_file = file,
-            'd' => self.data_file = file,
-            _ =>  return Err(Er::BadFileName),
         }
         Ok(())
     }
@@ -334,9 +342,6 @@ mod tests {
         File::create("/tmp/testx/d00000000000000a3");
         File::create("/tmp/testx/i00000000000000a3");
 
-        let file_number = Topic::latest_file_number(&String::from("testx"), &String::from("/tmp")).expect("file_numb");
-        assert_eq!(file_number, 0xa3);
-
         let config = TopicConfig {
             topic_id : 1,
             topic_name : String::from("testx"),
@@ -345,14 +350,13 @@ mod tests {
             file_mask : 8,
         };
 
-        let dp_latest_file_result = Topic::latest_file(true, 'd', &config);
-        assert!(dp_latest_file_result.is_ok(), "trying to get latest data file for writing");
+        let latest_data_name = Topic::latest_file_name('d', &config);
+        assert!(latest_data_name.is_ok(), "trying to get latest index file without error"); 
+        assert_eq!(latest_data_name.unwrap(), "/tmp/testx/d00000000000000a3", "trying to get latest data file");
 
-        let dp_latest_metadata_result = dp_latest_file_result.unwrap().metadata();
-        assert!(dp_latest_metadata_result.is_ok(), "trying to get latest data file for writing (metadata)");
-
-        let dp_latest_metadata = dp_latest_metadata_result.unwrap();
-        assert!(dp_latest_metadata.is_file(), "checking file object is real file (not directly or sym link");
+        let latest_index_name = Topic::latest_file_name('i', &config);
+        assert!(latest_index_name.is_ok(), "trying to get latest index file without error");
+        assert_eq!(latest_index_name.unwrap(), "/tmp/testx/i00000000000000a3", "trying to get latest index file");
     }
 
     #[test]

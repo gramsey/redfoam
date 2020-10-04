@@ -269,7 +269,7 @@ impl ConsumerServer {
             _       => RecordType::Undefined,
         };
 
-        let topic = self.topic_list.topic_for_id(topic_id)?;
+        let mut topic = self.topic_list.topic_for_id(topic_id)?;
 
         let (offset, size) = match feed_type {
             RecordType::IndexFeed => topic.read_index_latest(&mut buffer)?,
