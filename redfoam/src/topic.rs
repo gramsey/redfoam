@@ -1,9 +1,12 @@
 use std::fs;
 use std::fs::{File, OpenOptions};
+use std::net::{TcpStream};
+use std::io;
 use std::io::{Write, Read, SeekFrom, Seek};
 use inotify::{Inotify, WatchMask, WatchDescriptor };
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::os::unix::io::AsRawFd;
 
 use super::er::Er;
 use super::trace;
@@ -214,6 +217,35 @@ impl Topic {
         Ok(result)
     }
 
+    pub fn send_data(&mut self, tcp : &TcpStream, count: usize) -> Result<usize, Er> {
+        let file = self.data_file.as_raw_fd();
+        let socket = tcp.as_raw_fd();
+        let mut offset = 0;
+        trace!("calling sendfile"); 
+        let n = unsafe { libc::sendfile(socket, file, &mut offset, count) };
+        trace!("sendfile returned {} ", n); 
+
+        if n == -1 {
+            Err(Er::CantSendFile(io::Error::last_os_error()))
+        } else {
+            Ok(n as usize)
+        }
+    }
+/*
+
+    fn raw_send_file(&mut self) -> io::Result<usize> {
+        let file = self.file.as_raw_fd();
+        let socket = self.socket.as_raw_fd();
+        // This is the maximum the Linux kernel will write in a single call.
+        let count = 0x7ffff000;
+        let n = unsafe { libc::sendfile(socket, file, &mut offset, count) };
+        if n == -1 {
+            Err(io::Error::last_os_error())
+        } else {
+            self.written = offset as usize;
+            Ok(n as usize)
+        }
+    }
     fn _read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
         let mut buf : [u8; 16] = [0;16];
         let position : u64;
@@ -242,6 +274,7 @@ impl Topic {
             Ok((start, end - start))
         }
     }
+    */
 }
 
 pub struct TopicList {
@@ -331,6 +364,54 @@ impl TopicList {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::{TcpListener};
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    #[test]
+    fn zero_copy() {
+        let topic_config = TopicConfig {
+            topic_id : 1,
+            topic_name : String::from("test"),
+            folder : String::from("/tmp"),
+            replication : 0,
+            file_mask : 0,
+        };
+
+        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
+
+        let addr = "127.0.0.1:34292"; 
+
+        let listener = TcpListener::bind(&addr).unwrap();
+        let mut client_stream = TcpStream::connect(&addr).unwrap();
+        client_stream.set_read_timeout(Some(Duration::new(1, 0)));
+
+        let mut server_stream = listener.incoming().next().unwrap().unwrap();
+
+        let r = t.send_data(&server_stream, 5);
+
+        match r {
+            Err(e) => assert!(false, "check sendfile 1 worked {}", e),
+            Ok(n) => assert_eq!(n, 5),
+        }
+
+        trace!("now read as client");
+        let mut buffer = String::new();
+        client_stream.read_to_string(&mut buffer);
+        assert_eq!(String::from("hello"), buffer, "strings don't match");
+
+        let r2 = t.send_data(&server_stream, 5);
+
+        match r2 {
+            Err(e) => assert!(false, "check sendfile 2 worked {}", e),
+            Ok(n) => assert_eq!(n, 5),
+        }
+
+        trace!("now read as client");
+        buffer = String::new();
+        client_stream.read_to_string(&mut buffer);
+        assert_eq!(String::from("hello"), buffer, "strings don't match");
+    }
 
     #[test]
     fn latest_file() {
@@ -402,34 +483,6 @@ mod tests {
         match t.read_data_into(&mut buf[..idx as usize], 0) {
             Err(e) => assert!(false, "error reading data {}", e),
             Ok(n) => assert_eq!(n, idx as usize, "check {} data bytes read", n),
-        }
-    }
-
-    #[test]
-    fn test_readindex() {
-        let topic_config = TopicConfig {
-            topic_id : 1,
-            topic_name : String::from("test"),
-            folder : String::from("/tmp"),
-            replication : 0,
-            file_mask : 0,
-        };
-
-        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
-        match t._read_index(1) {
-            Ok((position, size)) => {
-                assert_eq!(position, 5);
-                assert_eq!(size, 12);
-            }
-            Err(e) => assert!(false, "error on read index {}", e),
-        }
-
-        match t._read_index(0) {
-            Ok((position, size)) => {
-                assert_eq!(position, 0);
-                assert_eq!(size, 5);
-            }
-            Err(e) => assert!(false, "error on read index {}", e),
         }
     }
 

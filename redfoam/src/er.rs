@@ -16,6 +16,7 @@ pub enum Er {
     InvalidSequence,
     CantReadFile(io::Error),
     CantWriteFile(io::Error),
+    CantSendFile(io::Error),
     CantReadDir(io::Error),
     CantOpenFile(io::Error),
     InotifyError(io::Error),
@@ -64,6 +65,10 @@ impl Display for Er {
             },
             Er::CantWriteFile(e) => {
                 s = format!("Failed to write to topic file :{}", e);
+                s.as_str()
+            },
+            Er::CantSendFile(e) => {
+                s = format!("Failed to send data to tcp port using linux sendfile,  os error :{}", e);
                 s.as_str()
             },
             Er::CantReadDir(e) => {
