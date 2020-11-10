@@ -19,7 +19,7 @@ pub struct ConsumerClient {
     id : u32,
     state : BufferState,
     buff : Buff,
-    tcp : TcpStream,
+    pub tcp : TcpStream,
     auth : Option<Auth>,
     rec_type : Option<RecordType>,
     topic_id : Option<u32>,
@@ -90,7 +90,9 @@ impl ConsumerClient {
                         Some(topic_id) => {
                             trace!("Server : ConsumerFollowTopics on {}", topic_id);
                             self.topic_id = Some(topic_id);
-                            let (index_pos, data_pos) = topic_list.follow_topic(topic_id, self.id)?;
+                            let t = topic_list.topic_for_id(topic_id)?;
+                            let (index_pos, data_pos) = t.follow(self.id)?;
+
                             self.rec_type = None;
                             self.buff.reset();
                             //send response
@@ -261,7 +263,6 @@ impl ConsumerServer {
     }
 
     fn send_to_client(&mut self, topic_id : u32, file_name : &str) -> Result<(), Er> {
-        let mut buffer = [0; 1010];
 
         let feed_type = match file_name.chars().nth(0) {
             Some('i') => RecordType::IndexFeed, 
@@ -269,21 +270,10 @@ impl ConsumerServer {
             _       => RecordType::Undefined,
         };
 
-        let mut topic = self.topic_list.topic_for_id(topic_id)?;
+        let topic = self.topic_list.topic_for_id(topic_id)?;
 
-        let (offset, size) = match feed_type {
-            RecordType::IndexFeed => topic.read_index_latest(&mut buffer)?,
-            RecordType::DataFeed => topic.read_data_latest(&mut buffer)?,
-            _ => (0, 0),
-        };
+        topic.send_followers(&mut self.client_list, feed_type)?;
 
-        if let Some(client_ids) = self.topic_list.followers.get_mut(&topic_id) {
-            for client_id in client_ids {
-                if let Some(client) = self.client_list.get_mut(client_id) {
-                    client.send_feed(offset, &buffer[..size], feed_type);
-                }
-            }
-        }
         Ok(())
     }
 

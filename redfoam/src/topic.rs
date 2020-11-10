@@ -4,13 +4,16 @@ use std::net::{TcpStream};
 use std::io;
 use std::io::{Write, Read, SeekFrom, Seek};
 use inotify::{Inotify, WatchMask, WatchDescriptor };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::os::unix::io::AsRawFd;
+use std::ptr;
 
 use super::er::Er;
 use super::trace;
 use super::config::{Config, TopicConfig};
+use super::tcp::RecordType;
+use super::consumer::ConsumerClient;
 
 pub struct Topic {
     index : u64,
@@ -23,6 +26,7 @@ pub struct Topic {
     pub last_index_offset : u64,
     is_producer : bool,
     config : TopicConfig,
+    followers : HashSet<u32>,
 }
 impl Topic {
 
@@ -52,6 +56,7 @@ impl Topic {
             last_index_offset : last_index,
             is_producer : is_producer,
             config : config,
+            followers : HashSet::new(),
         })
     }
 
@@ -217,12 +222,69 @@ impl Topic {
         Ok(result)
     }
 
-    pub fn send_data(&mut self, tcp : &TcpStream, count: usize) -> Result<usize, Er> {
-        let file = self.data_file.as_raw_fd();
+    pub fn send_followers (&mut self, client_list: &mut HashMap<u32, ConsumerClient>, feed_type: RecordType) -> Result<Option<usize>, Er> {
+
+        let client_count = self.followers.len();
+        let mut client_no = 0;
+
+        let mut size_to_send: Option<usize> = None;
+
+        let file = match feed_type {
+            RecordType::IndexFeed => self.index_file.as_raw_fd(),
+            RecordType::DataFeed => self.data_file.as_raw_fd(),
+            _ => return Err(Er::BadFileName),
+        };
+
+        for client_id in self.followers.iter() {
+            if let Some(client) = client_list.get_mut(&client_id) {
+                client_no += 1;
+
+                let is_last : bool = (client_count == client_no);
+
+                let socket = client.tcp.as_raw_fd();
+                let mut offset = 0;
+                let null: *mut i64 = ptr::null_mut();
+
+                trace!("calling sendfile"); 
+                let n = match size_to_send {
+                    Some(n) if is_last => unsafe { libc::sendfile(socket, file, &mut offset, n) },
+                    Some(n)            => unsafe { libc::sendfile(socket, file, null, n) },
+                    None    if is_last => unsafe { libc::sendfile(socket, file, &mut offset, 0x7ffff000 ) },
+                    None               => unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) },
+                };
+                trace!("sendfile returned {} ", n); 
+
+                if n < 0 {
+                    return Err(Er::CantSendFile(io::Error::last_os_error()))
+                } else { 
+                    if size_to_send.is_none() {
+                        size_to_send = Some(n as usize);
+                    }
+                }
+            }
+        }
+        Ok(size_to_send)
+    }
+
+    fn send_data(&mut self, tcp : &TcpStream, count: Option<usize>, feed_type: RecordType, update_file_pointer: bool) -> Result<usize, Er> {
+
+        let file = match feed_type {
+            RecordType::IndexFeed => self.index_file.as_raw_fd(),
+            RecordType::DataFeed => self.data_file.as_raw_fd(),
+            _ => return Err(Er::BadFileName),
+        };
+
         let socket = tcp.as_raw_fd();
         let mut offset = 0;
+        let null: *mut i64 = ptr::null_mut();
+
         trace!("calling sendfile"); 
-        let n = unsafe { libc::sendfile(socket, file, &mut offset, count) };
+        let n = match count {
+            Some(n) if update_file_pointer  => unsafe { libc::sendfile(socket, file, &mut offset, n) },
+            Some(n)                         => unsafe { libc::sendfile(socket, file, null, n) },
+            None    if update_file_pointer  => unsafe { libc::sendfile(socket, file, &mut offset, 0x7ffff000 ) },
+            None                            => unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) },
+        };
         trace!("sendfile returned {} ", n); 
 
         if n == -1 {
@@ -230,6 +292,11 @@ impl Topic {
         } else {
             Ok(n as usize)
         }
+    }
+
+    pub fn follow(&mut self, client_id : u32) -> Result<(u64, u64), Er> {
+        self.followers.insert(client_id);
+        Ok((self.last_index_offset, self.last_data_offset))
     }
 /*
 
@@ -388,7 +455,7 @@ mod tests {
 
         let mut server_stream = listener.incoming().next().unwrap().unwrap();
 
-        let r = t.send_data(&server_stream, 5);
+        let r = t.send_data(&server_stream, 5, RecordType::DataFeed);
 
         match r {
             Err(e) => assert!(false, "check sendfile 1 worked {}", e),
