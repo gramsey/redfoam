@@ -6,7 +6,7 @@ use std::io::{Write, Read, SeekFrom, Seek};
 use inotify::{Inotify, WatchMask, WatchDescriptor };
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
 
 use super::er::Er;
@@ -242,17 +242,8 @@ impl Topic {
                 let is_last : bool = (client_count == client_no);
 
                 let socket = client.tcp.as_raw_fd();
-                let mut offset = 0;
-                let null: *mut i64 = ptr::null_mut();
 
-                trace!("calling sendfile"); 
-                let n = match size_to_send {
-                    Some(n) if is_last => unsafe { libc::sendfile(socket, file, &mut offset, n) },
-                    Some(n)            => unsafe { libc::sendfile(socket, file, null, n) },
-                    None    if is_last => unsafe { libc::sendfile(socket, file, &mut offset, 0x7ffff000 ) },
-                    None               => unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) },
-                };
-                trace!("sendfile returned {} ", n); 
+                let n = Self::linux_send_file(socket, file, size_to_send, is_last)?;
 
                 if n < 0 {
                     return Err(Er::CantSendFile(io::Error::last_os_error()))
@@ -266,88 +257,32 @@ impl Topic {
         Ok(size_to_send)
     }
 
-    fn send_data(&mut self, tcp : &TcpStream, count: Option<usize>, feed_type: RecordType, update_file_pointer: bool) -> Result<usize, Er> {
-
-        let file = match feed_type {
-            RecordType::IndexFeed => self.index_file.as_raw_fd(),
-            RecordType::DataFeed => self.data_file.as_raw_fd(),
-            _ => return Err(Er::BadFileName),
-        };
-
-        let socket = tcp.as_raw_fd();
-        let mut offset = 0;
+    fn linux_send_file (socket:RawFd, file:RawFd, send_size:Option<usize>, is_last:bool) -> Result<isize, Er> {
+        trace!("calling sendfile"); 
+        let mut zero_offset = 0;
         let null: *mut i64 = ptr::null_mut();
 
-        trace!("calling sendfile"); 
-        let n = match count {
-            Some(n) if update_file_pointer  => unsafe { libc::sendfile(socket, file, &mut offset, n) },
-            Some(n)                         => unsafe { libc::sendfile(socket, file, null, n) },
-            None    if update_file_pointer  => unsafe { libc::sendfile(socket, file, &mut offset, 0x7ffff000 ) },
-            None                            => unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) },
+        // zero offset and null differ as null will update the file descriptor with new position
+
+        let n = match send_size {
+            Some(n) if is_last => unsafe { libc::sendfile(socket, file, &mut zero_offset, n) },
+            Some(n)            => unsafe { libc::sendfile(socket, file, null, n) },
+            None    if is_last => unsafe { libc::sendfile(socket, file, &mut zero_offset, 0x7ffff000 ) },
+            None               => unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) },
         };
         trace!("sendfile returned {} ", n); 
-
-        if n == -1 {
-            Err(Er::CantSendFile(io::Error::last_os_error()))
-        } else {
-            Ok(n as usize)
-        }
+        Ok(n)
     }
 
     pub fn follow(&mut self, client_id : u32) -> Result<(u64, u64), Er> {
         self.followers.insert(client_id);
         Ok((self.last_index_offset, self.last_data_offset))
     }
-/*
-
-    fn raw_send_file(&mut self) -> io::Result<usize> {
-        let file = self.file.as_raw_fd();
-        let socket = self.socket.as_raw_fd();
-        // This is the maximum the Linux kernel will write in a single call.
-        let count = 0x7ffff000;
-        let n = unsafe { libc::sendfile(socket, file, &mut offset, count) };
-        if n == -1 {
-            Err(io::Error::last_os_error())
-        } else {
-            self.written = offset as usize;
-            Ok(n as usize)
-        }
-    }
-    fn _read_index(&mut self, rec_no: u64) -> Result<(u64, u64), Er> {
-        let mut buf : [u8; 16] = [0;16];
-        let position : u64;
-        let idx_size : u64;
-
-        // todo: if  rec_no % filesize == 0
-        if rec_no == 0 { 
-            idx_size = 8;
-            position = 0;
-        } else { 
-            idx_size = 16; 
-            position = (rec_no - 1) * 8;
-        }
-
-        self.index_file.seek(SeekFrom::Start(position)).unwrap();
-        self.read_index_into(&mut buf[..idx_size as usize], position)?;
-
-        let start : u64;
-        let data_size;
-        if rec_no == 0 { 
-            data_size = u64::from_le_bytes(buf[..8].try_into().expect("should always be 8 bytes -> u64"));
-            Ok((0, data_size))
-        } else { 
-            start = u64::from_le_bytes(buf[..8].try_into().expect("should always be 8 bytes -> u64"));
-            let end = u64::from_le_bytes(buf[8..16].try_into().expect("should always be 8 bytes -> u64"));
-            Ok((start, end - start))
-        }
-    }
-    */
 }
 
 pub struct TopicList {
     topic_names : HashMap<String, u32>,
     topics : HashMap<u32, Topic>,
-    pub followers : HashMap<u32, Vec<u32>>,
     pub watchers : HashMap<WatchDescriptor, u32>,
     pub notify : Inotify,
 }
@@ -358,14 +293,12 @@ impl TopicList {
         let topic_names : HashMap<String, u32> = HashMap::new();
         let topics : HashMap<u32, Topic> = HashMap::new();
         let watchers : HashMap<WatchDescriptor, u32> = HashMap::new();
-        let followers : HashMap<u32, Vec<u32>> = HashMap::new();
         let notify = Inotify::init().expect("Inotify initialization failed - does this linux kernel support inotify?");
         let mut config = Config::new();
 
         let mut topic_list = TopicList {
             topic_names,
             topics,
-            followers,
             watchers,
             notify,
         };
@@ -401,40 +334,77 @@ impl TopicList {
         let topic = self.topics.get_mut(&topic_id).ok_or(Er::TopicNotFound)?;
         Ok(topic)
     }
-/*
-    pub fn get_topics(&self, _filter : &str) -> Result<Option<Vec<u16>>,Er> {
-        let mut x : Vec<u16> = Vec::new();
-        x.push(1);
-        Ok(Some(x))
-    }
-    */
-    pub fn follow_topic(&mut self, topic_id : u32, client_id: u32) -> Result<(u64, u64), Er> {
-        println!("following {}", topic_id);
-        match self.followers.get_mut(&topic_id) {
-            Some(clients) => clients.push(client_id),
-            None => {
-                let mut client_list : Vec<u32> = Vec::new();
-                client_list.push(client_id);
-                println!("created client list for topic {}", topic_id);
-                self.followers.insert(topic_id, client_list);
-            },
-        }
-        if let Some(topic) = self.topics.get_mut(&topic_id) {
-            Ok((topic.last_index_offset, topic.last_data_offset))
-        } else {
-            Err(Er::TopicNotFound)
-        }
-    }
 
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::buff::Buff;
+    use super::super::tcp::{BufferState, RecordType};
     use std::net::{TcpListener};
     use std::thread::sleep;
     use std::time::Duration;
 
+#[test]
+    fn send_follower() {
+        // set up topic
+
+        let topic_config = TopicConfig {
+            topic_id : 1,
+            topic_name : String::from("test"),
+            folder : String::from("/tmp"),
+            replication : 0,
+            file_mask : 0,
+        };
+
+        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
+
+        // set up tcp client 
+        let addr = "127.0.0.1:34292"; 
+
+        let listener = TcpListener::bind(&addr).unwrap();
+        let mut client_stream = TcpStream::connect(&addr).unwrap();
+        client_stream.set_read_timeout(Some(Duration::new(1, 0)));
+
+        let mut server_stream = listener.incoming().next().unwrap().unwrap();
+
+        let buff = Buff::new();
+
+        let c = ConsumerClient::new(1, server_stream);
+
+        let mut client_list : HashMap<u32, ConsumerClient> = HashMap::new();
+        client_list.insert(1, c);
+
+        // run test
+        t.follow(1);
+        let r = t.send_followers(&mut client_list, RecordType::DataFeed); 
+
+        match r {
+            Err(e) => assert!(false, "check sendfile 1 worked {}", e),
+            Ok(Some(n)) => assert!(n > 5, "checking at lest 5 bytes written"),
+            Ok(None) => assert!(false, "nothing written to stream"),
+        }
+
+        trace!("start read as client");
+        let mut buffer = String::new();
+        client_stream.read_to_string(&mut buffer);
+        assert_eq!(String::from("hello"), buffer, "strings don't match");
+/*
+        let r2 = t.send_data(&server_stream, 5);
+
+        match r2 {
+            Err(e) => assert!(false, "check sendfile 2 worked {}", e),
+            Ok(n) => assert_eq!(n, 5),
+        }
+
+        trace!("now read as client");
+        buffer = String::new();
+        client_stream.read_to_string(&mut buffer);
+        assert_eq!(String::from("hello"), buffer, "strings don't match");
+        */
+    }
+/*
     #[test]
     fn zero_copy() {
         let topic_config = TopicConfig {
@@ -479,6 +449,7 @@ mod tests {
         client_stream.read_to_string(&mut buffer);
         assert_eq!(String::from("hello"), buffer, "strings don't match");
     }
+    */
 
     #[test]
     fn latest_file() {
