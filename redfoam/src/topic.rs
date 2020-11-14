@@ -151,7 +151,7 @@ impl Topic {
         let idx = self.index;
         self.index += 1;
 
-        let file_position = self.data_file.seek(SeekFrom::End(0))
+        let file_position = self.data_file.seek(SeekFrom::Current(0))
             .map_err(|e| Er::CantReadFile(e))?;
 
         let file_position_bytes = (file_position as u64).to_le_bytes();
@@ -265,10 +265,17 @@ impl Topic {
         // zero offset and null differ as null will update the file descriptor with new position
 
         let n = match send_size {
-            Some(n) if is_last => unsafe { libc::sendfile(socket, file, &mut zero_offset, n) },
-            Some(n)            => unsafe { libc::sendfile(socket, file, null, n) },
-            None    if is_last => unsafe { libc::sendfile(socket, file, &mut zero_offset, 0x7ffff000 ) },
-            None               => unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) },
+            Some(n) =>  if is_last { 
+                            unsafe { libc::sendfile(socket, file, null, n) }
+                        } else {
+                            unsafe { libc::sendfile(socket, file, &mut zero_offset, n) } 
+                        },
+
+            None    =>  if is_last { 
+                            unsafe { libc::sendfile(socket, file, null, 0x7ffff000 ) }
+                        } else {
+                            unsafe { libc::sendfile(socket, file, &mut zero_offset, 0x7ffff000 ) }
+                        },
         };
         trace!("sendfile returned {} ", n); 
         Ok(n)
@@ -278,6 +285,13 @@ impl Topic {
         self.followers.insert(client_id);
         Ok((self.last_index_offset, self.last_data_offset))
     }
+
+    #[cfg(test)] 
+    pub fn get_data_file_name(&self) -> String { self.data_file_name.clone() }
+
+    #[cfg(test)] 
+    pub fn get_index_file_name(&self) -> String { self.index_file_name.clone() }
+
 }
 
 pub struct TopicList {
@@ -342,23 +356,68 @@ mod tests {
     use super::*;
     use super::super::buff::Buff;
     use super::super::tcp::{BufferState, RecordType};
+    use super::super::test_support::TestEnvironment;
+    use super::super::test_support::TestTopic;
+
     use std::net::{TcpListener};
     use std::thread::sleep;
     use std::time::Duration;
+    use std::fs;
 
-#[test]
+    #[test]
+    fn send_file() {
+        let mut file = std::fs::File::create("/tmp/data.txt").expect("create failed");
+        file.write_all("Hello World".as_bytes()).expect("write failed");
+
+        let mut file_read = std::fs::File::open("/tmp/data.txt").expect("create failed");
+
+        let addr = "127.0.0.1:34293"; 
+
+        let listener = TcpListener::bind(&addr).unwrap();
+        let mut client_stream = TcpStream::connect(&addr).unwrap();
+        client_stream.set_read_timeout(Some(Duration::new(1, 0)));
+
+        let mut server_stream = listener.incoming().next().unwrap().unwrap();
+
+        let f = file_read.as_raw_fd();
+        let s = server_stream.as_raw_fd();
+        trace!("sending file");
+
+        Topic::linux_send_file (s, f, None, false);
+        let mut buffer1 = String::new();
+        client_stream.read_to_string(&mut buffer1);
+        assert_eq!(buffer1, "Hello World", "testing result 1 (full string no update)");
+
+        Topic::linux_send_file (s, f, Some(5), true);
+        let mut buffer3 = String::new();
+        client_stream.read_to_string(&mut buffer3);
+        assert_eq!(buffer3, "Hello", "testing result 3 (5 bytes with update");
+
+        Topic::linux_send_file (s, f, None, true);
+        let mut buffer4 = String::new();
+        client_stream.read_to_string(&mut buffer4);
+        assert_eq!(buffer4, " World", "testing result 4 (rest of file from pos of last update");
+
+
+    }
+
+    #[test]
     fn send_follower() {
         // set up topic
+        //
+        let env = TestEnvironment::new("send_follower_test");
 
         let topic_config = TopicConfig {
             topic_id : 1,
-            topic_name : String::from("test"),
+            topic_name : String::from("test2"),
             folder : String::from("/tmp"),
             replication : 0,
             file_mask : 0,
         };
 
         let mut t = Topic::open(topic_config, false).expect("trying to create topic");
+
+        let mut t = Topic::test_new(&env, 2, "test2");
 
         // set up tcp client 
         let addr = "127.0.0.1:34292"; 
@@ -382,7 +441,7 @@ mod tests {
 
         match r {
             Err(e) => assert!(false, "check sendfile 1 worked {}", e),
-            Ok(Some(n)) => assert!(n > 5, "checking at lest 5 bytes written"),
+            Ok(Some(n)) => assert_eq!(n , 5,  "checking at lest 5 bytes written"),
             Ok(None) => assert!(false, "nothing written to stream"),
         }
 

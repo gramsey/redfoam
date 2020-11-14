@@ -8,3 +8,5 @@ pub mod topic;
 pub mod buff;
 pub mod auth;
 pub mod er;
+#[cfg(test)]
+pub mod test_support;
