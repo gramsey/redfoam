@@ -13,7 +13,7 @@ impl Config {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 pub struct TopicConfig {
     pub topic_id : u32,
     pub topic_name : String,

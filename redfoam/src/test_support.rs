@@ -15,7 +15,6 @@ pub struct TestEnvironment {
 }
 
 impl TestEnvironment {
-
     pub fn new( name:&str ) -> TestEnvironment {
         let dir_name = format!("/tmp/redfoam_{}", name);
         fs::create_dir(&dir_name).expect("create topic dir failed");
@@ -24,13 +23,13 @@ impl TestEnvironment {
 }
 
 pub trait TestTopic {
-    fn test_new(env:&TestEnvironment, id:u32, name:&str) -> Self;
+    fn test_new(env:&TestEnvironment, id:u32, name:&str, is_producer:bool) -> Self;
+    fn test_open(&self, is_producer:bool) -> Self;
     fn create_entries(&self, content:&[u8], max_repeat:u32, record_count:u32) ;
 }
 
 impl TestTopic for topic::Topic {
-
-    fn test_new(env:&TestEnvironment, id:u32, name:&str) -> Self {
+    fn test_new(env:&TestEnvironment, id:u32, name:&str, is_producer:bool) -> Self {
         let dir_name = format!("{}/{}", &env.folder, name);
         let data_file_name = format!("{}/{}/d0000000000000000", env.folder, name);
         let index_file_name = format!("{}/{}/i0000000000000000", env.folder, name);
@@ -47,8 +46,13 @@ impl TestTopic for topic::Topic {
             file_mask : 0,
         };
 
-        topic::Topic::open(topic_config, false).expect("trying to create topic")
+        topic::Topic::open(topic_config, is_producer).expect("trying to create topic")
     }
+
+    fn test_open(&self, is_producer:bool) -> Self {
+        topic::Topic::open(self.get_config(), is_producer).expect("trying to open topic")
+    }
+
 
     fn create_entries(&self, content:&[u8], repeat_limit:u32, record_count:u32) {
         let mut rng = thread_rng();
@@ -96,7 +100,7 @@ mod test {
     #[test]
     fn test_testtopic() {
         let te = TestEnvironment::new("testtopic");
-        let t = topic::Topic::test_new(&te, 1, "mytesttopic");
+        let t = topic::Topic::test_new(&te, 1, "mytesttopic", false);
         assert!(Path::new("/tmp/redfoam_testtopic/mytesttopic").exists());
         assert!(Path::new("/tmp/redfoam_testtopic/mytesttopic/d0000000000000000").exists());
         assert!(Path::new("/tmp/redfoam_testtopic/mytesttopic/i0000000000000000").exists());
@@ -123,9 +127,5 @@ mod test {
 
         let last_index = u64::from_le_bytes(index[72..80].try_into().unwrap());
         assert_eq!(last_index, alldata.len() as u64, "last index value should match data file size");
-
-
     }
-
 }
-

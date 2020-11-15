@@ -292,6 +292,11 @@ impl Topic {
     #[cfg(test)] 
     pub fn get_index_file_name(&self) -> String { self.index_file_name.clone() }
 
+    #[cfg(test)] 
+    pub fn get_config(&self) -> TopicConfig { 
+
+        self.config.clone() }
+
 }
 
 pub struct TopicList {
@@ -403,21 +408,12 @@ mod tests {
 
     #[test]
     fn send_follower() {
-        // set up topic
-        //
-        let env = TestEnvironment::new("send_follower_test");
+        let env = TestEnvironment::new("send_follower");
+        let mut t = Topic::test_new(&env, 2, "test2", false);
+        let mut t_producer = t.test_open(true);
 
-        let topic_config = TopicConfig {
-            topic_id : 1,
-            topic_name : String::from("test2"),
-            folder : String::from("/tmp"),
-            replication : 0,
-            file_mask : 0,
-        };
+        t_producer.write(b"hello");
 
-        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
-
-        let mut t = Topic::test_new(&env, 2, "test2");
 
         // set up tcp client 
         let addr = "127.0.0.1:34292"; 
@@ -449,19 +445,21 @@ mod tests {
         let mut buffer = String::new();
         client_stream.read_to_string(&mut buffer);
         assert_eq!(String::from("hello"), buffer, "strings don't match");
-/*
-        let r2 = t.send_data(&server_stream, 5);
+
+        t_producer.write(b"world");
+
+        let r2 = t.send_followers(&mut client_list, RecordType::DataFeed); 
 
         match r2 {
-            Err(e) => assert!(false, "check sendfile 2 worked {}", e),
-            Ok(n) => assert_eq!(n, 5),
+            Err(e) => assert!(false, "check sendfile 1 worked {}", e),
+            Ok(Some(n)) => assert_eq!(n , 5,  "checking at lest 5 bytes written"),
+            Ok(None) => assert!(false, "nothing written to stream"),
         }
 
-        trace!("now read as client");
-        buffer = String::new();
-        client_stream.read_to_string(&mut buffer);
-        assert_eq!(String::from("hello"), buffer, "strings don't match");
-        */
+        let mut buffer2 = String::new();
+        client_stream.read_to_string(&mut buffer2);
+        assert_eq!(String::from("world"), buffer2, "strings don't match");
+
     }
 /*
     #[test]
@@ -539,15 +537,9 @@ mod tests {
 
     #[test]
     fn test_topicwrite() {
-        let topic_config = TopicConfig {
-            topic_id : 1,
-            topic_name : String::from("test"),
-            folder : String::from("/tmp"),
-            replication : 0,
-            file_mask : 0,
-        };
+        let env = TestEnvironment::new("topicwrite_env");
+        let mut t = Topic::test_new(&env, 1, "test", true);
 
-        let mut t = Topic::open(topic_config, true).expect("trying to create topic");
         let idx = t.index;
         let written : usize = t.write(&b"hello"[..]).expect("trying to write to file");
         assert_eq!(written, 5, "5 bytes should be written to file");
@@ -557,15 +549,12 @@ mod tests {
 
     #[test]
     fn test_readfirstrecord() {
-        let topic_config = TopicConfig {
-            topic_id : 1,
-            topic_name : String::from("test"),
-            folder : String::from("/tmp"),
-            replication : 0,
-            file_mask : 0,
-        };
+        let env = TestEnvironment::new("readfirstrecord");
+        let mut t = Topic::test_new(&env, 1, "test1", false);
 
-        let mut t = Topic::open(topic_config, false).expect("trying to create topic");
+        let content = b"First Record";
+        t.create_entries(content, 2, 2);
+
         let mut buf : [u8; 8] = [0;8];
 
         match t.read_index_into(&mut buf, 0) {
@@ -574,16 +563,22 @@ mod tests {
         }
 
         let idx = u64::from_le_bytes(buf);
+        trace!("read index {}", idx);
 
         assert_ne!(idx, 0, "check index value is not zero");
 
-        match t.read_data_into(&mut buf[..idx as usize], 0) {
+        let mut databuf : [u8;1024] = [0;1024];
+        match t.read_data_into(&mut databuf[..idx as usize], 0) {
             Err(e) => assert!(false, "error reading data {}", e),
             Ok(n) => assert_eq!(n, idx as usize, "check {} data bytes read", n),
         }
+
+        assert_eq!(databuf[0], content[0], "check first char");
+        assert_eq!(databuf[11], content[11], "check last char");
     }
 
     #[test]
+    #[ignore]
     fn test_topiclist() {
         let mut tl_producer = TopicList::init(true).unwrap();
         let mut tl_consumer = TopicList::init(false).unwrap();
