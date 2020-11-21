@@ -13,7 +13,7 @@ use super::topic::{TopicList};
 use super::buff::{Buff};
 use super::tcp::{BufferState, RecordType};
 use super::auth::Auth;
-use super::er::Er;
+use super::er::{Er,LogError};
 
 pub struct ConsumerClient {
     id : u32,
@@ -191,7 +191,7 @@ impl ConsumerServer {
 
             // process existing clients - go backwards as list will change length
             for (_, client) in &mut self.client_list {
-                client.process(&mut self.topic_list);
+                client.process(&mut self.topic_list).handle_err("Consumer process() error");
             }
 
             self.client_list.retain(| _, c | match c.state() {
@@ -202,15 +202,17 @@ impl ConsumerServer {
             // process topic updates
             let mut event_buffer = [0; 1024];
             let events = self.topic_list.notify.read_events(&mut event_buffer)
-                .expect("Error while reading events");
-
+                .map_err(|e| Er::InotifyError(e))
+                .handle_err("Consumer error reading events");
 
             for e in events {
-                let (file_name, topic_id, mask) = self.unwrap_event(e).unwrap();
+                let (file_name, topic_id, mask) = self.unwrap_event(e)
+                    .handle_err("Consumer Error unwraping event");
 
                 let action_result = match mask {
                     EventMask::CREATE => {
-                        let t = self.topic_list.topic_for_id(topic_id).expect("topic should exist in list");
+                        let t = self.topic_list.topic_for_id(topic_id)
+                            .handle_err("topic should exist in list");
                         t.switch_file(file_name)
                     },
                     EventMask::MODIFY => {
@@ -219,7 +221,7 @@ impl ConsumerServer {
                     _ => Err(Er::InvalidEventMask)
                 };
 
-                action_result.expect("Failed to take appropriate action on event");
+                action_result.handle_err("Failed to take appropriate action on event");
                 /*
                 match self.topic_list.watchers.get(&e.wd) {
                     Some(topic_id) => {

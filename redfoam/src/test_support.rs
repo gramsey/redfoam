@@ -1,8 +1,5 @@
 use super::*;
 
-use std::net::{TcpListener};
-use std::thread::sleep;
-use std::time::Duration;
 use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io::{Write};
@@ -34,9 +31,9 @@ impl TestTopic for topic::Topic {
         let data_file_name = format!("{}/{}/d0000000000000000", env.folder, name);
         let index_file_name = format!("{}/{}/i0000000000000000", env.folder, name);
 
-        let mut folder = fs::create_dir(dir_name).expect("create topic dir failed");
-        let mut index_file = File::create(index_file_name).expect("create topic index file failed");
-        let mut data_file = File::create(data_file_name).expect("create topic data file failed");
+        fs::create_dir(dir_name).expect("create topic dir failed");
+        File::create(index_file_name).expect("create topic index file failed");
+        File::create(data_file_name).expect("create topic data file failed");
 
         let topic_config = config::TopicConfig {
             topic_id : id,
@@ -62,10 +59,10 @@ impl TestTopic for topic::Topic {
         let mut data_file = file_opener.open(self.get_data_file_name()).expect("create topic data file failed");
 
         let mut position:u64 = 0;
-        for i in 0..record_count {
+        for _ in 0..record_count {
 
             let n: u32 = rng.gen_range(1, repeat_limit);
-            for j in 0..n {
+            for _ in 0..n {
                 data_file.write_all(content).expect("failed writing test data");
                 position += content.len() as u64;
             }
@@ -90,7 +87,7 @@ mod test {
     fn test_env() {
 
         {
-            let te = TestEnvironment::new("mytest");
+            let _te = TestEnvironment::new("mytest");
             assert!(Path::new("/tmp/redfoam_mytest").exists());
 
         }

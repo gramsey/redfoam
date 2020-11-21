@@ -18,30 +18,23 @@ macro_rules! trace {
             #[cfg(debug_assertions)] print!("\u{001B}[0m");
         };
 }
-/*
-macro_rules! debug {
+
+#[macro_export]
+macro_rules! log_error {
         ($msg:expr) => {
-            #[cfg(debug_assertions)] print!("DEBUG : ");
-            #[cfg(debug_assertions)] println!($msg);
+            let trace_current_time = std::time::SystemTime::now();
+            let trace_timestamp = trace_current_time.duration_since(std::time::UNIX_EPOCH).expect("Time went backwards");
+            print!("{:?}", trace_timestamp);
+            print!("\u{001B}[31mERROR [{}:{}] : ", file!(), line!());
+            println!($msg);
+            print!("\u{001B}[0m");
         };
         ($($msg:expr),*) => {
-            #[cfg(debug_assertions)] print!("DEBUG : ");
-            #[cfg(debug_assertions)] println!($($msg,)*);
+            let trace_current_time = std::time::SystemTime::now();
+            let trace_timestamp = trace_current_time.duration_since(std::time::UNIX_EPOCH).expect("Time went backwards");
+            print!("{:?}", trace_timestamp);
+            print!("\u{001B}[31mERROR [{}:{}] : ", file!(), line!());
+            println!($($msg,)*);
+            print!("\u{001B}[0m");
         };
 }
-macro_rules! info {
-        ($expression:expr) => {
-            println!($expression);
-        };
-}
-macro_rules! warn {
-        ($expression:expr) => {
-            println!($expression);
-        };
-}
-macro_rules! error {
-        ($expression:expr) => {
-            println!($expression);
-        };
-}
-*/

@@ -3,6 +3,9 @@ use std::fmt::{Display, Formatter};
 use std::io;
 use std::sync::mpsc;
 use std::num;
+use std::result::Result;
+
+use super::log_error;
 
 #[derive(Debug)]
 pub enum Er {
@@ -29,6 +32,25 @@ pub enum Er {
     BadFileName,
     BadOffset(String, num::ParseIntError),
 }
+
+pub trait LogError {
+    type Output;
+    fn handle_err(self, message: &str) -> Self::Output;
+}
+
+impl<T> LogError for Result<T,Er> {
+    type Output = T;
+    fn handle_err(self, message: &str) -> T {
+        match self {
+            Err(e) => {
+                log_error!("{} {}", message, e);
+                panic!("{}",message);
+            },
+            _ => { self.unwrap()},
+        }
+    }
+}
+
 
 impl Display for Er {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
