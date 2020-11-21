@@ -31,6 +31,7 @@ pub enum Er {
     InvalidEventMask,
     BadFileName,
     BadOffset(String, num::ParseIntError),
+    ParseError(String),
 }
 
 pub trait LogError {
@@ -113,6 +114,10 @@ impl Display for Er {
             Er::InvalidEventMask => "Event mask returned from event is unexpected",
             Er::BadOffset(f_name, e) => {
                 s = format!("Bad topic filename {} - cannot parse the hex offset value :{}", f_name, e);
+                s.as_str()
+            },
+            Er::ParseError(message) => {
+                s = format!("Error coverting to type {}", message);
                 s.as_str()
             },
         };

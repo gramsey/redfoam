@@ -3,21 +3,23 @@ use std::convert::TryInto;
 use std::mem;
 use std::fmt;
 
-use super::er::Er;
+use super::er::{Er, LogError};
 
 use super::trace;
 
-pub const BUFF_SIZE : usize = 1024;
+pub const BUFF_SIZE:usize = 1024;
 
 macro_rules! make_read_fn {
-    ($fn_name: ident, $fn_type : ty) => {
+    ($fn_name: ident, $fn_type:ty) => {
 
         pub fn $fn_name (&mut self) -> Option<$fn_type> {
-            let size : usize = mem::size_of::<$fn_type>();
+            let size:usize = mem::size_of::<$fn_type>();
             if self.has_n_bytes(size) {
                 let start = self.rec_pos as usize;
                 let end = start + size;
-                let result = <$fn_type>::from_le_bytes(self.buffer[start..end].try_into().expect("slice with incorrect length"));
+                let result = <$fn_type>::from_le_bytes(self.buffer[start..end].try_into()
+                    .map_err(|e| Er::ParseError(format!("slice with {} incorrect length for {}, Error: {}", size, "$fn_type", e)))
+                    .handle_err("Error reading number from bits in buffer")); //this error should never ever happen
                 self.rec_pos += size as u32;
                 self.rec_upto += size as u32;
                 Some(result)
@@ -29,13 +31,13 @@ macro_rules! make_read_fn {
 }
 
 pub struct Buff {
-    pub  rec_size : Option<u32>,
-    pub buffer : [u8 ; BUFF_SIZE],
-    buff_pos : u32,
-    rec_pos : u32,
-    rec_upto : u32,
-    pub seq : u8,
-    seq_checked : bool,
+    pub  rec_size:Option<u32>,
+    pub buffer:[u8 ; BUFF_SIZE],
+    buff_pos:u32,
+    rec_pos:u32,
+    rec_upto:u32,
+    pub seq:u8,
+    seq_checked:bool,
 }
 impl Buff {
     pub fn new() -> Buff {
@@ -64,7 +66,7 @@ impl Buff {
         }
     }
 
-    pub fn read_data(&mut self, stream : &mut impl Read) -> Result<usize, Er>  {
+    pub fn read_data(&mut self, stream: &mut impl Read) -> Result<usize, Er>  {
         match stream.read(&mut self.buffer[self.buff_pos as usize..BUFF_SIZE]) {
             Ok(size) => {
                 self.buff_pos += size as u32;
@@ -101,7 +103,7 @@ impl Buff {
         self.read_to() as u32 - self.rec_pos > 0
     }
 
-    fn has_n_bytes(&self, n : usize) -> bool {
+    fn has_n_bytes(&self, n:usize) -> bool {
         self.buff_pos >= self.rec_pos + n as u32
     }
 

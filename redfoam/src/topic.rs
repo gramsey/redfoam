@@ -230,19 +230,15 @@ impl Topic {
 
                 let n = Self::linux_send_file(socket, file, size_to_send, is_last)?;
 
-                if n < 0 {
-                    return Err(Er::CantSendFile(io::Error::last_os_error()))
-                } else { 
-                    if size_to_send.is_none() {
-                        size_to_send = Some(n as usize);
-                    }
+                if size_to_send.is_none() {
+                    size_to_send = Some(n);
                 }
             }
         }
         Ok(size_to_send)
     }
 
-    fn linux_send_file (socket:RawFd, file:RawFd, send_size:Option<usize>, is_last:bool) -> Result<isize, Er> {
+    fn linux_send_file (socket:RawFd, file:RawFd, send_size:Option<usize>, is_last:bool) -> Result<usize, Er> {
         trace!("calling sendfile"); 
         let mut zero_offset = 0;
         let null: *mut i64 = ptr::null_mut();
@@ -262,8 +258,12 @@ impl Topic {
                             unsafe { libc::sendfile(socket, file, &mut zero_offset, 0x7ffff000 ) }
                         },
         };
-        trace!("sendfile returned {} ", n); 
-        Ok(n)
+
+        if n < 0 {
+            Err(Er::CantSendFile(io::Error::last_os_error()))
+        } else { 
+            Ok(n as usize)
+        }
     }
 
     pub fn follow(&mut self, client_id : u32) -> Result<(u64, u64), Er> {

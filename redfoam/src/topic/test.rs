@@ -10,9 +10,9 @@ use std::fs;
 #[test]
 fn send_file() {
     let mut file = std::fs::File::create("/tmp/data.txt").expect("create failed");
-    file.write_all("Hello World".as_bytes()).expect("write failed");
+    let file_read = std::fs::File::open("/tmp/data.txt").expect("open for read failed");
 
-    let file_read = std::fs::File::open("/tmp/data.txt").expect("create failed");
+    file.write_all(b"Hello World").expect("write failed");
 
     let addr = "127.0.0.1:34293"; 
 
@@ -26,21 +26,29 @@ fn send_file() {
     let s = server_stream.as_raw_fd();
     trace!("sending file");
 
-    Topic::linux_send_file (s, f, None, false).expect("error on sendfile");
+    let n = Topic::linux_send_file (s, f, None, false);
+    assert!(n.is_ok(), "linux_send_file_failed with {}", n.unwrap());
+    assert_eq!(n.unwrap(), b"Hello World".len(), "not written expected length"); 
 
     let mut buffer1 = String::new();
-    client_stream.read_to_string(&mut buffer1).expect("error on read_to_string");
+    client_stream.read_to_string(&mut buffer1).ok();
     assert_eq!(buffer1, "Hello World", "testing result 1 (full string no update)");
 
-    Topic::linux_send_file (s, f, Some(5), true);
+    let n2 = Topic::linux_send_file (s, f, Some(5), true);
+    assert!(n2.is_ok(), "linux_send_file_failed with {}", n2.unwrap());
+    assert_eq!(n2.unwrap(), b"Hello".len(), "not written expected length"); 
+    
+    let mut buffer2 = String::new();
+    client_stream.read_to_string(&mut buffer2);
+    assert_eq!(buffer2, "Hello", "testing result 3 (5 bytes with update");
+
+    let n3 = Topic::linux_send_file (s, f, None, true);
+    assert!(n3.is_ok(), "linux_send_file_failed with {}", n3.unwrap());
+    assert_eq!(n3.unwrap(), b" World".len(), "not written expected length"); 
+
     let mut buffer3 = String::new();
     client_stream.read_to_string(&mut buffer3);
-    assert_eq!(buffer3, "Hello", "testing result 3 (5 bytes with update");
-
-    Topic::linux_send_file (s, f, None, true);
-    let mut buffer4 = String::new();
-    client_stream.read_to_string(&mut buffer4);
-    assert_eq!(buffer4, " World", "testing result 4 (rest of file from pos of last update");
+    assert_eq!(buffer3, " World", "testing result 4 (rest of file from pos of last update");
 
 
 }
